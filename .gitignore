@@ -1,0 +1,32 @@
+# VPC generated project/solution files
+*.sln
+*.suo
+*.vcxproj
+*.vcxproj.*
+*.mak
+*.vpc_crc
+*.vpc_cache
+*.sentinel
+*.veanputdata
+_vpc_/
+
+# Build intermediates / outputs
+[Dd]ebug/
+[Rr]elease/
+Debug_*/
+Release_*/
+[Bb]in/
+[Oo]bj/
+*.obj
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.idb
+
+# Misc
+.vs/
+
+# Built module output (ship via GitHub Releases, not the source tree)
+dist/

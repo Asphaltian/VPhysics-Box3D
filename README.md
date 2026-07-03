@@ -33,14 +33,15 @@ Work in progress!
 ## Platforms
 
 > [!NOTE]
-> These are Windows builds. Linux and macOS are unknown as of now.
+> These are Windows builds.
+> Vox3D is failing to compile on Linux on the x64 MP SDK and x86 SP SDK, other branches have not been tested; macOS is unknown as of now.
 
 | Branches | Builds | Tested |
 |:--|:--:|:--:|
-| SDK 2013 SP/MP x86 | ✔️ | |
-| SDK 2013 MP x64 | ✔️ | |
-| Alien Swarm x86 | ✔️ | |
-| Garry's Mod x86 | ✔️ | |
+| SDK 2013 SP/MP x86 | ✔️ |  |
+| SDK 2013 MP x64 | ✔️ |  |
+| Alien Swarm x86 | ✔️ |  |
+| Garry's Mod x86 | ✔️ |  |
 | Garry's Mod x64 | ✔️ | ✔️ |
 
 To build, see: [build.md](build.md)

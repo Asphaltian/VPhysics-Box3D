@@ -44,13 +44,11 @@ Box3DPhysicsEnvironment::Box3DPhysicsEnvironment()
 	b3WorldDef def = b3DefaultWorldDef();
 	// Only hit events for impacts >= 70 in/s (Source's collision-sound threshold).
 	def.hitEventThreshold = SourceToBox::Distance( 70.0f );
-	// Cap body speed at sv_maxvelocity so a solver blow-up can't fling objects to an invalid coordinate,
-	// which the engine treats as deleted.
+	// Cap at sv_maxvelocity so a solver blow-up can't fling an object to an invalid (deleted) coordinate.
 	def.maximumLinearSpeed = SourceToBox::Distance( 3500.0f );
 	def.enableContinuous = true;
-	// Box3D's default 3 m/s penetration push-out pops overlapping bodies apart hard enough to fling
-	// the player off props; IVP separates penetration gently.
-	def.contactSpeed = SourceToBox::Distance( 20.0f );
+	// Penetration push-out cap: gentler than Box3D's 3 m/s default, but not so low ragdoll limbs wedge.
+	def.contactSpeed = SourceToBox::Distance( 100.0f );
 	// workerCount > 1 with no task callbacks runs Box3D's built-in scheduler; physical cores only, HT hurts.
 	def.workerCount = (uint32_t)clamp( (int)GetCPUInformation()->m_nPhysicalProcessors, 1, B3_MAX_WORKERS );
 	m_WorldId = b3CreateWorld( &def );
@@ -104,6 +102,8 @@ IPhysicsObject *Box3DPhysicsEnvironment::CreateObject( const CPhysCollide *pColl
 	bodyDef.position = SourceToBox::Distance( position );
 	bodyDef.rotation = SourceToBox::Angle( angles );
 	bodyDef.isAwake = false;
+	// 2x Box3D's default so piles settle and sleep instead of jittering awake.
+	bodyDef.sleepThreshold = SourceToBox::Distance( 4.0f );
 
 	const b3BodyId bodyId = b3CreateBody( m_WorldId, &bodyDef );
 
@@ -155,6 +155,7 @@ IPhysicsObject* Box3DPhysicsEnvironment::CreateSphereObject( float radius, int m
 	bodyDef.position = SourceToBox::Distance( position );
 	bodyDef.rotation = SourceToBox::Angle( angles );
 	bodyDef.isAwake = false;
+	bodyDef.sleepThreshold = SourceToBox::Distance( 4.0f );
 
 	const b3BodyId bodyId = b3CreateBody( m_WorldId, &bodyDef );
 
@@ -233,110 +234,6 @@ IPhysicsSpring* Box3DPhysicsEnvironment::CreateSpring( IPhysicsObject* pObjectSt
 void Box3DPhysicsEnvironment::DestroySpring( IPhysicsSpring* )
 {
 	Log_Stub( LOG_VBox3D );
-}
-
-// No-op constraints. The game virtual-calls whatever these Create* methods return without a null
-// check, so they must return a valid object rather than null.
-namespace
-{
-	class Box3DDummyConstraint final : public IPhysicsConstraint
-	{
-	public:
-		void Activate() override {}
-		void Deactivate() override {}
-		void SetGameData( void* gameData ) override { m_pGameData = gameData; }
-		void* GetGameData() const override { return m_pGameData; }
-		IPhysicsObject* GetReferenceObject() const override { return m_pReference; }
-		IPhysicsObject* GetAttachedObject() const override { return m_pAttached; }
-		void SetLinearMotor( float, float ) override {}
-		void SetAngularMotor( float, float ) override {}
-		void UpdateRagdollTransforms( const matrix3x4_t&, const matrix3x4_t& ) override {}
-		bool GetConstraintTransform( matrix3x4_t* pConstraintToReference, matrix3x4_t* pConstraintToAttached ) const override
-		{
-			if ( pConstraintToReference ) SetIdentityMatrix( *pConstraintToReference );
-			if ( pConstraintToAttached ) SetIdentityMatrix( *pConstraintToAttached );
-			return false;
-		}
-		bool GetConstraintParams( constraint_breakableparams_t* pParams ) const override
-		{
-			if ( pParams ) memset( pParams, 0, sizeof( *pParams ) );
-			return false;
-		}
-		void OutputDebugInfo() override {}
-
-		void* m_pGameData = nullptr;
-		IPhysicsObject* m_pReference = nullptr;
-		IPhysicsObject* m_pAttached = nullptr;
-	};
-
-	class Box3DDummyConstraintGroup final : public IPhysicsConstraintGroup
-	{
-	public:
-		void Activate() override {}
-		bool IsInErrorState() override { return false; }
-		void ClearErrorState() override {}
-		void GetErrorParams( constraint_groupparams_t* pParams ) override { if ( pParams ) memset( pParams, 0, sizeof( *pParams ) ); }
-		void SetErrorParams( const constraint_groupparams_t& ) override {}
-		void SolvePenetration( IPhysicsObject*, IPhysicsObject* ) override {}
-	};
-
-	IPhysicsConstraint* MakeDummyConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject )
-	{
-		Box3DDummyConstraint* pConstraint = new Box3DDummyConstraint;
-		pConstraint->m_pReference = pReferenceObject;
-		pConstraint->m_pAttached = pAttachedObject;
-		return pConstraint;
-	}
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateRagdollConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_ragdollparams_t& ragdoll )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateHingeConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_hingeparams_t& hinge )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateFixedConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_fixedparams_t& fixed )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateSlidingConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_slidingparams_t& sliding )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateBallsocketConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_ballsocketparams_t& ballsocket )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreatePulleyConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_pulleyparams_t& pulley )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-IPhysicsConstraint* Box3DPhysicsEnvironment::CreateLengthConstraint( IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup, const constraint_lengthparams_t& length )
-{
-	return MakeDummyConstraint( pReferenceObject, pAttachedObject );
-}
-
-void Box3DPhysicsEnvironment::DestroyConstraint( IPhysicsConstraint* pConstraint )
-{
-	delete static_cast< Box3DDummyConstraint* >( pConstraint );
-}
-
-IPhysicsConstraintGroup* Box3DPhysicsEnvironment::CreateConstraintGroup( const constraint_groupparams_t& groupParams )
-{
-	return new Box3DDummyConstraintGroup;
-}
-
-void Box3DPhysicsEnvironment::DestroyConstraintGroup( IPhysicsConstraintGroup* pGroup )
-{
-	delete static_cast< Box3DDummyConstraintGroup* >( pGroup );
 }
 
 IPhysicsShadowController* Box3DPhysicsEnvironment::CreateShadowController( IPhysicsObject* pObject, bool allowTranslation, bool allowRotation )

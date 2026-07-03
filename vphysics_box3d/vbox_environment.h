@@ -8,11 +8,15 @@
 
 #include "vbox_interface.h"
 
+#include <functional>
+
 class Box3DPhysicsObject;
 class Box3DPhysicsShadowController;
 class Box3DPhysicsMotionController;
 class Box3DPhysicsPlayerController;
 class Box3DPhysicsFluidController;
+class Box3DPhysicsConstraint;
+class Box3DPhysicsConstraintGroup;
 
 class Box3DPhysicsEnvironment final : public IPhysicsEnvironment
 {
@@ -146,6 +150,9 @@ private:
 	// Drain Box3D's post-step contact events into the game's collision callbacks.
 	void DrainContactEvents();
 
+	// Track a new constraint, wire it to its group, and build its joint (unless deferred to the group).
+	IPhysicsConstraint *FinishConstraint( Box3DPhysicsConstraint *pConstraint, IPhysicsConstraintGroup *pGroup, bool bActive, const std::function< b3JointId() > &buildFn );
+
 	b3WorldId m_WorldId;
 
 	Vector m_vecGravity = vec3_origin;
@@ -168,4 +175,5 @@ private:
 	CUtlVector< Box3DPhysicsMotionController * > m_MotionControllers;
 	CUtlVector< Box3DPhysicsPlayerController * > m_PlayerControllers;
 	CUtlVector< Box3DPhysicsFluidController * > m_FluidControllers;
+	CUtlVector< Box3DPhysicsConstraint * > m_Constraints;
 };

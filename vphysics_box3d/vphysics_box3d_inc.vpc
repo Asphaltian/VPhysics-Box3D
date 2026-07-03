@@ -94,6 +94,7 @@ $Project "$PROJNAME"
 		}
 
 		$File	"vbox_collide.cpp"
+		$File	"vbox_constraints.cpp"
 		$File	"vbox_controllers.cpp"
 		$File	"vbox_environment.cpp"
 		$File	"vbox_interface.cpp"
@@ -123,6 +124,7 @@ $Project "$PROJNAME"
 		}
 
 		$File	"vbox_collide.h"
+		$File	"vbox_constraints.h"
 		$File	"vbox_controllers.h"
 		$File	"vbox_environment.h"
 		$File	"vbox_interface.h"

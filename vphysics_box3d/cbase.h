@@ -58,11 +58,7 @@
 #include "tier1/tier1.h"
 #include "tier1/strtools.h"
 #include "tier1/interface.h"
-#ifndef GAME_L4D2_OR_NEWER
 #include "tier1/KeyValues.h"
-#else
-#include "tier1/keyvalues.h"
-#endif
 #include "tier1/UtlStringMap.h"
 #include "tier1/utlbuffer.h"
 

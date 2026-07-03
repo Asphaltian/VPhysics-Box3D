@@ -1,9 +1,17 @@
 set(_sdk_src "${CMAKE_CURRENT_SOURCE_DIR}/mini-source-sdk/${VOX_SDK}/src")
 
-if(VOX_ARCH STREQUAL x64)
-    set(_lib_dir "${_sdk_src}/lib/public/x64")
+if(WIN32)
+    if(VOX_ARCH STREQUAL x64)
+        set(_lib_dir "${_sdk_src}/lib/public/x64")
+    else()
+        set(_lib_dir "${_sdk_src}/lib/public")
+    endif()
 else()
-    set(_lib_dir "${_sdk_src}/lib/public")
+    if(VOX_ARCH STREQUAL x64)
+        set(_lib_dir "${_sdk_src}/lib/public/linux64")
+    else()
+        set(_lib_dir "${_sdk_src}/lib/public/linux32")
+    endif()
 endif()
 
 add_library(vox_sdk_headers INTERFACE)
@@ -16,23 +24,30 @@ target_include_directories(vox_sdk_headers SYSTEM INTERFACE
     "${_sdk_src}/common"
 )
 
-set(_defs
-    COMPILER_MSVC
-    _DLL_EXT=dll
-    RAD_TELEMETRY_DISABLED
-    WIN32 _WIN32 _WINDOWS
-    NOMINMAX
-    _ALLOW_KEYWORD_MACROS
-    _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS
-    _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE
-    _ALLOW_RUNTIME_LIBRARY_MISMATCH
-    _ALLOW_ITERATOR_DEBUG_LEVEL_MISMATCH
-    _ALLOW_MSC_VER_MISMATCH
-)
-if(VOX_ARCH STREQUAL x64)
-    list(APPEND _defs PLATFORM_64BITS WIN64 _WIN64 COMPILER_MSVC64)
+set(_defs RAD_TELEMETRY_DISABLED)
+if(WIN32)
+    list(APPEND _defs
+        COMPILER_MSVC
+        _DLL_EXT=dll
+        WIN32 _WIN32 _WINDOWS
+        NOMINMAX
+        _ALLOW_KEYWORD_MACROS
+        _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS
+        _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE
+        _ALLOW_RUNTIME_LIBRARY_MISMATCH
+        _ALLOW_ITERATOR_DEBUG_LEVEL_MISMATCH
+        _ALLOW_MSC_VER_MISMATCH
+    )
+    if(VOX_ARCH STREQUAL x64)
+        list(APPEND _defs PLATFORM_64BITS WIN64 _WIN64 COMPILER_MSVC64)
+    else()
+        list(APPEND _defs COMPILER_MSVC32)
+    endif()
 else()
-    list(APPEND _defs COMPILER_MSVC32)
+    list(APPEND _defs GNUC POSIX _POSIX COMPILER_GCC _DLL_EXT=so _LINUX LINUX)
+    if(VOX_ARCH STREQUAL x64)
+        list(APPEND _defs PLATFORM_64BITS)
+    endif()
 endif()
 if(VOX_SDK STREQUAL gmod)
     list(APPEND _defs GAME_GMOD GAME_SDK2013)
@@ -63,7 +78,6 @@ set(_tier1_sources
     memstack.cpp
     NetAdr.cpp
     newbitbuf.cpp
-    processor_detect.cpp
     rangecheckedvar.cpp
     reliabletimer.cpp
     snappy-sinksource.cpp
@@ -83,6 +97,11 @@ set(_tier1_sources
     utlstring.cpp
     utlsymbol.cpp
 )
+if(WIN32)
+    list(APPEND _tier1_sources processor_detect.cpp)
+else()
+    list(APPEND _tier1_sources processor_detect_linux.cpp qsort_s.cpp pathmatch.cpp)
+endif()
 
 set(_mathlib_sources
     3dnow.cpp
@@ -127,41 +146,46 @@ function(vox_add_sdk_lib name define)
         if(VOX_ARCH STREQUAL x86)
             target_compile_options(vox_${name} PRIVATE /arch:SSE)
         endif()
+    else()
+        target_compile_options(vox_${name} PRIVATE -w -msse2)
     endif()
 endfunction()
 
-set(_sdk_link
-    "${_lib_dir}/tier0.lib"
-    "${_lib_dir}/vstdlib.lib"
-)
+function(vox_prebuilt out name)
+    if(WIN32)
+        set(${out} "${_lib_dir}/${name}.lib" PARENT_SCOPE)
+    elseif(name STREQUAL tier2)
+        set(${out} "${_lib_dir}/${name}.a" PARENT_SCOPE)
+    else()
+        set(${out} "${_lib_dir}/lib${name}.so" PARENT_SCOPE)
+    endif()
+endfunction()
 
-if(IS_DIRECTORY "${_sdk_src}/tier1")
-    vox_add_sdk_lib(tier1 TIER1_STATIC_LIB ${_tier1_sources})
-    list(APPEND _sdk_link vox_tier1)
-else()
-    list(APPEND _sdk_link "${_lib_dir}/tier1.lib")
-endif()
+vox_prebuilt(_tier0_lib tier0)
+vox_prebuilt(_vstdlib_lib vstdlib)
+set(_sdk_link "${_tier0_lib}" "${_vstdlib_lib}")
 
-if(IS_DIRECTORY "${_sdk_src}/tier2")
-    vox_add_sdk_lib(tier2 TIER2_STATIC_LIB ${_tier2_sources})
-    list(APPEND _sdk_link vox_tier2)
-else()
-    list(APPEND _sdk_link "${_lib_dir}/tier2.lib")
-endif()
+foreach(_pair "tier1;_tier1_sources;TIER1_STATIC_LIB" "tier2;_tier2_sources;TIER2_STATIC_LIB" "mathlib;_mathlib_sources;MATHLIB_LIB")
+    list(GET _pair 0 _lib)
+    list(GET _pair 1 _srcvar)
+    list(GET _pair 2 _def)
+    if(IS_DIRECTORY "${_sdk_src}/${_lib}")
+        vox_add_sdk_lib(${_lib} ${_def} ${${_srcvar}})
+        list(APPEND _sdk_link vox_${_lib})
+    else()
+        vox_prebuilt(_pl ${_lib})
+        list(APPEND _sdk_link "${_pl}")
+    endif()
+endforeach()
 
-if(IS_DIRECTORY "${_sdk_src}/mathlib")
-    vox_add_sdk_lib(mathlib MATHLIB_LIB ${_mathlib_sources})
-    list(APPEND _sdk_link vox_mathlib)
-else()
-    list(APPEND _sdk_link "${_lib_dir}/mathlib.lib")
-endif()
-
-if(EXISTS "${_lib_dir}/interfaces.lib")
+if(WIN32 AND EXISTS "${_lib_dir}/interfaces.lib")
     list(APPEND _sdk_link "${_lib_dir}/interfaces.lib")
 endif()
 
 if(WIN32)
     list(APPEND _sdk_link Rpcrt4.lib)
+else()
+    list(APPEND _sdk_link ${CMAKE_DL_LIBS} pthread)
 endif()
 
 add_library(vox_sdk INTERFACE)

@@ -32,12 +32,15 @@ message(STATUS "Vox3D: SDK '${VOX_SDK}', ${VOX_ARCH} (${CMAKE_GENERATOR})")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(MSVC)
     add_compile_options(/MP /W3 /Zc:strictStrings- /permissive)
+else()
+    add_compile_options(-msse2 $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
 
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT

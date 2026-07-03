@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows ${{ matrix.preset }} ${{ matrix.config }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [ gmod-x64, gmod-x86 ]
+        config: [ Debug, Release ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.preset }}-${{ matrix.config }}
+          path: build/${{ matrix.preset }}/bin/${{ matrix.config }}/vphysics.dll
+          if-no-files-found: ignore
+
+  linux:
+    name: linux ${{ matrix.preset }} (experimental)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [ gmod-linux-x64, gmod-linux-x86 ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gcc-multilib g++-multilib
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}-Release

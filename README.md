@@ -33,15 +33,17 @@ Work in progress!
 ## Platforms
 
 > [!NOTE]
-> These are Windows builds. Linux and macOS are unknown as of now.
+> These are Windows and Linux builds. macOS is unknown as of now.
 
-| Branches | Builds | Tested |
-|:--|:--:|:--:|
-| SDK 2013 SP/MP x86 | ✔️ | |
-| SDK 2013 MP x64 | ✔️ | |
-| Alien Swarm x86 | ✔️ | |
-| Garry's Mod x86 | ✔️ | |
-| Garry's Mod x64 | ✔️ | ✔️ |
+| Branches | Operating System | Builds | Tested |
+|:--|:--:|:--:|:--:|
+| SDK 2013 SP/MP x86 | Windows | ✔️ |  |
+| | Linux | ❌ | |
+| SDK 2013 MP x64 | Windows | ✔️ |  |
+| | Linux | ❌ | |
+| Alien Swarm x86 | Windows | ✔️ |  |
+| Garry's Mod x86 | Windows | ✔️ |  |
+| Garry's Mod x64 | Windows | ✔️ | ✔️ |
 
 To build, see: [build.md](build.md)
 

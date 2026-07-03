@@ -58,3 +58,5 @@ obj*/
 # Mac Stuff
 *.xcodeproj/
 
+build/
+

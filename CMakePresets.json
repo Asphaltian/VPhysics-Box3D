@@ -1,0 +1,72 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25 },
+
+    "configurePresets": [
+        {
+            "name": "_vs2022",
+            "hidden": true,
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "vendor": {
+                "microsoft.com/VisualStudioSettings/CMake/1.0": { "hostOS": [ "Windows" ] }
+            }
+        },
+        {
+            "name": "_vs2022-x86",
+            "hidden": true,
+            "inherits": "_vs2022",
+            "architecture": "Win32"
+        },
+        {
+            "name": "_vs2022-x64",
+            "hidden": true,
+            "inherits": "_vs2022",
+            "architecture": "x64"
+        },
+
+        {
+            "name": "gmod-x64",
+            "displayName": "Garry's Mod (x64, VS 2022)",
+            "inherits": "_vs2022-x64",
+            "cacheVariables": { "VOX_SDK": "gmod" }
+        },
+        {
+            "name": "gmod-x86",
+            "displayName": "Garry's Mod (x86, VS 2022)",
+            "inherits": "_vs2022-x86",
+            "cacheVariables": { "VOX_SDK": "gmod" }
+        },
+        {
+            "name": "sdk2013-mp",
+            "displayName": "Source SDK 2013 MP (x86, VS 2022)",
+            "inherits": "_vs2022-x86",
+            "cacheVariables": { "VOX_SDK": "sdk2013-mp" }
+        },
+        {
+            "name": "sdk2013-sp",
+            "displayName": "Source SDK 2013 SP (x86, VS 2022)",
+            "inherits": "_vs2022-x86",
+            "cacheVariables": { "VOX_SDK": "sdk2013-sp" }
+        },
+        {
+            "name": "asw",
+            "displayName": "Alien Swarm (x86, VS 2022)",
+            "inherits": "_vs2022-x86",
+            "cacheVariables": { "VOX_SDK": "asw" }
+        }
+    ],
+
+    "buildPresets": [
+        { "name": "gmod-x64-Debug",     "configurePreset": "gmod-x64",   "configuration": "Debug" },
+        { "name": "gmod-x64-Release",   "configurePreset": "gmod-x64",   "configuration": "Release" },
+        { "name": "gmod-x86-Debug",     "configurePreset": "gmod-x86",   "configuration": "Debug" },
+        { "name": "gmod-x86-Release",   "configurePreset": "gmod-x86",   "configuration": "Release" },
+        { "name": "sdk2013-mp-Debug",   "configurePreset": "sdk2013-mp", "configuration": "Debug" },
+        { "name": "sdk2013-mp-Release", "configurePreset": "sdk2013-mp", "configuration": "Release" },
+        { "name": "sdk2013-sp-Debug",   "configurePreset": "sdk2013-sp", "configuration": "Debug" },
+        { "name": "sdk2013-sp-Release", "configurePreset": "sdk2013-sp", "configuration": "Release" },
+        { "name": "asw-Debug",          "configurePreset": "asw",        "configuration": "Debug" },
+        { "name": "asw-Release",        "configurePreset": "asw",        "configuration": "Release" }
+    ]
+}

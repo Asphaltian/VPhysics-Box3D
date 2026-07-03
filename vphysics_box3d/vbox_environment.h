@@ -149,6 +149,10 @@ public:
 	IPhysicsCollisionSolver *GetCollisionSolver() const { return m_pCollisionSolver; }
 	IPhysicsObject *CreateObject( const CPhysCollide *pCollisionModel, int materialIndex, const Vector &position, const QAngle &angles, objectparams_t *pParams, bool bStatic );
 
+#if GAME_GMOD
+	void SetGModObjectEventHandler( IGModPhysicsObjectEvent *pGModObjectEvent ) override { m_pGModObjectEvent = pGModObjectEvent; }
+#endif
+
 private:
 	// Drain Box3D's post-step contact events into the game's collision callbacks.
 	void DrainContactEvents();
@@ -168,6 +172,9 @@ private:
 	IPhysicsCollisionEvent *m_pCollisionEvent = nullptr;
 	IPhysicsObjectEvent *m_pObjectEvent = nullptr;
 	IPhysicsCollisionSolver *m_pCollisionSolver = nullptr;
+#if GAME_GMOD
+	IGModPhysicsObjectEvent *m_pGModObjectEvent = nullptr;
+#endif
 
 	CUtlVector< Box3DPhysicsObject * > m_Objects;
 	mutable CUtlVector< Box3DPhysicsObject * > m_ActiveObjects;

@@ -6,8 +6,9 @@
 
 #pragma once
 
+#include "vbox_environment.h"
+
 class IPredictedPhysicsObject;
-class Box3DPhysicsEnvironment;
 class Box3DPhysicsShadowController;
 
 #if defined( GAME_CSGO_OR_NEWER )
@@ -142,6 +143,12 @@ public:
 	void SetErrorDelta_Position( const Vector& vPosition ) override_csgo {}
 	void SetErrorDelta_Velocity( const Vector& vVelocity ) override_csgo {}
 
+#if GAME_GMOD
+	float			GetBuoyancyRatio() const override { return m_flBuoyancyRatio; }
+	int				GetLuaReference() const override { return m_nLuaReference; }
+	void			SetLuaReference( int nLuaReference ) override { m_nLuaReference = nLuaReference; }
+#endif
+
 public:
 	Box3DPhysicsEnvironment *GetEnvironment() { return m_pEnvironment; }
 	b3BodyId GetBodyID() const { return m_BodyId; }
@@ -195,6 +202,10 @@ private:
 	float m_flMaterialDensity = 0.0f;	// surfaceprops density, kg/m^3
 	float m_flBuoyancyRatio = 1.0f;	// actualDensity / materialDensity
 	bool m_bTrigger = false;
+
+#if GAME_GMOD
+	int m_nLuaReference = -1;
+#endif
 
 	float m_flLinearDamping = 0.0f;
 	float m_flAngularDamping = 0.0f;

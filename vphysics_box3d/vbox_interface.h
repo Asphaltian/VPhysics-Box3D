@@ -77,6 +77,10 @@ public:
 	IPhysicsCollisionSet *FindCollisionSet( unsigned int id ) override;
 	void DestroyAllCollisionSets() override;
 
+#if GAME_GMOD
+	bool IsValidPhysicsObject( IPhysicsObject *pObject ) override { return pObject != nullptr; }
+#endif
+
 public:
 	static Box3DPhysicsInterface &GetInstance() { return s_PhysicsInterface; }
 

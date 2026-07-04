@@ -16,6 +16,8 @@
 #include "vbox_constraints.h"
 #include "vbox_surfaceprops.h"
 
+#include "tier0/threadtools.h"
+
 #include "tier0/memdbgon.h"
 
 namespace
@@ -43,6 +45,9 @@ namespace
 	float Box3DFrictionCombine( float a, uint64_t, float b, uint64_t )		{ return a * b; }
 	float Box3DRestitutionCombine( float a, uint64_t, float b, uint64_t )	{ return clamp( a * b, 0.0f, 1.0f ); }
 
+	// These callbacks run on Box3D worker threads; the game's solver isn't thread-safe.
+	CThreadFastMutex g_CollisionSolverMutex;
+
 	// Ask the game's solver whether two shapes' objects may collide (collision groups, no-collide, debris).
 	bool ShapesCollide( void *context, b3ShapeId shapeA, b3ShapeId shapeB )
 	{
@@ -63,6 +68,7 @@ namespace
 		if ( !pSolver )
 			return true;
 
+		AUTO_LOCK( g_CollisionSolverMutex );
 		return pSolver->ShouldCollide( pA, pB, pA->GetGameData(), pB->GetGameData() ) != 0;
 	}
 

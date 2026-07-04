@@ -17,8 +17,11 @@
 #include "vbox_surfaceprops.h"
 
 #include "tier0/threadtools.h"
+#include "tier1/convar.h"
 
 #include "tier0/memdbgon.h"
+
+static ConVar vbox_substeps("vbox_substeps", "8", FCVAR_NONE, "Solver substeps per physics step.", true, 1.0f, true, 32.0f);
 
 namespace
 {
@@ -372,7 +375,7 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
 
 	m_flSimulationClock += deltaTime;
 
-	b3World_Step(m_WorldId, deltaTime, 4);
+	b3World_Step(m_WorldId, deltaTime, vbox_substeps.GetInt());
 
 	// Wake/sleep transitions -> ObjectWake/ObjectSleep (prop sleep networking and game logic).
 	for (int i = 0; i < m_Objects.Count(); i++)

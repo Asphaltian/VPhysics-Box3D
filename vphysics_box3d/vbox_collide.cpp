@@ -225,31 +225,75 @@ const b3HullData *CPhysConvex::GetSimHull()
 	if ( !m_pHull )
 		return nullptr;
 
-	const int nCount = m_pHull->vertexCount;
-	const b3Vec3 *pPoints = b3GetHullPoints( m_pHull );
+	const int nFaceCount = m_pHull->faceCount;
+	if ( nFaceCount < 4 )
+		return m_pHull;
 
-	b3Vec3 center = { 0.0f, 0.0f, 0.0f };
-	for ( int i = 0; i < nCount; i++ )
+	const b3Plane *pPlanes = b3GetHullPlanes( m_pHull );
+
+	// Source .phy hulls are authored pre-shrunk by IVP's collision tolerance (0.25in per face); box3d
+	// rests contacts at the true surface, so re-inflate each face plane outward by that distance and
+	// re-enumerate the vertices (triple-plane intersections kept only if inside every offset plane).
+	// Offsetting the planes, not the vertices, keeps rotated/diagonal convexes from shearing.
+	const float flInflate = SourceToBox::Distance( 0.25f );
+	const float flInsideEps = SourceToBox::Distance( 0.01f );
+	const float flDedupEps = SourceToBox::Distance( 0.01f );
+
+	CUtlVector< b3Vec3 > verts;
+	for ( int i = 0; i < nFaceCount; i++ )
 	{
-		center.x += pPoints[ i ].x;
-		center.y += pPoints[ i ].y;
-		center.z += pPoints[ i ].z;
-	}
-	const float flInv = nCount > 0 ? 1.0f / nCount : 0.0f;
-	center.x *= flInv; center.y *= flInv; center.z *= flInv;
+		const b3Vec3 ni = pPlanes[ i ].normal;
+		for ( int j = i + 1; j < nFaceCount; j++ )
+		{
+			const b3Vec3 nj = pPlanes[ j ].normal;
+			for ( int k = j + 1; k < nFaceCount; k++ )
+			{
+				const b3Vec3 nk = pPlanes[ k ].normal;
 
-	// Per-axis outward inflation from the centroid: exact for boxes, a touch larger on diagonal faces.
-	const float flMargin = B3_MESH_REST_OFFSET;
-	CUtlVector< b3Vec3 > inflated;
-	inflated.SetCount( nCount );
-	for ( int i = 0; i < nCount; i++ )
-	{
-		inflated[ i ].x = pPoints[ i ].x + ( pPoints[ i ].x >= center.x ? flMargin : -flMargin );
-		inflated[ i ].y = pPoints[ i ].y + ( pPoints[ i ].y >= center.y ? flMargin : -flMargin );
-		inflated[ i ].z = pPoints[ i ].z + ( pPoints[ i ].z >= center.z ? flMargin : -flMargin );
+				const b3Vec3 cjk = b3Cross( nj, nk );
+				const float det = b3Dot( ni, cjk );
+				if ( fabsf( det ) < 1e-6f )
+					continue;
+
+				const float di = pPlanes[ i ].offset + flInflate;
+				const float dj = pPlanes[ j ].offset + flInflate;
+				const float dk = pPlanes[ k ].offset + flInflate;
+
+				const b3Vec3 cki = b3Cross( nk, ni );
+				const b3Vec3 cij = b3Cross( ni, nj );
+				const b3Vec3 x = b3MulSV( 1.0f / det, b3Add( b3Add( b3MulSV( di, cjk ), b3MulSV( dj, cki ) ), b3MulSV( dk, cij ) ) );
+
+				bool bInside = true;
+				for ( int m = 0; m < nFaceCount; m++ )
+				{
+					if ( b3Dot( pPlanes[ m ].normal, x ) - ( pPlanes[ m ].offset + flInflate ) > flInsideEps )
+					{
+						bInside = false;
+						break;
+					}
+				}
+				if ( !bInside )
+					continue;
+
+				bool bDup = false;
+				for ( int v = 0; v < verts.Count(); v++ )
+				{
+					if ( b3Length( b3Sub( verts[ v ], x ) ) < flDedupEps )
+					{
+						bDup = true;
+						break;
+					}
+				}
+				if ( !bDup )
+					verts.AddToTail( x );
+			}
+		}
 	}
 
-	m_pSimHull = b3CreateHull( inflated.Base(), nCount, kMaxHullVertices );
+	if ( verts.Count() < 4 )
+		return m_pHull;
+
+	m_pSimHull = b3CreateHull( verts.Base(), verts.Count(), kMaxHullVertices );
 	return m_pSimHull ? m_pSimHull : m_pHull;
 }
 

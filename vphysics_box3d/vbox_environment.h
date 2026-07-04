@@ -157,6 +157,8 @@ private:
 	// Drain Box3D's post-step contact events into the game's collision callbacks.
 	void DrainContactEvents();
 
+	void DeleteObject( Box3DPhysicsObject *pObject );
+
 	// Track a new constraint, wire it to its group, and build its joint (unless deferred to the group).
 	IPhysicsConstraint *FinishConstraint( Box3DPhysicsConstraint *pConstraint, IPhysicsConstraintGroup *pGroup, bool bActive, const std::function< b3JointId() > &buildFn );
 

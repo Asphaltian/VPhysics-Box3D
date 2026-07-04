@@ -189,9 +189,8 @@ unsigned short Box3DPhysicsObject::GetCallbackFlags() const			{ return m_callbac
 
 void Box3DPhysicsObject::Wake()										{ if ( !m_bStatic ) b3Body_SetAwake( m_BodyId, true ); }
 void Box3DPhysicsObject::Sleep()									{ if ( !m_bStatic ) b3Body_SetAwake( m_BodyId, false ); }
-void Box3DPhysicsObject::RecheckCollisionFilter()					{ RecheckContactPoints( false ); }
-// Wake so Box3D re-pairs and re-evaluates contacts against the current collision rules next step.
-void Box3DPhysicsObject::RecheckContactPoints( bool )				{ if ( !m_bStatic && b3Body_IsValid( m_BodyId ) ) b3Body_SetAwake( m_BodyId, true ); }
+void Box3DPhysicsObject::RecheckCollisionFilter()					{ /* Not needed */  }
+void Box3DPhysicsObject::RecheckContactPoints( bool )				{ /* Not needed */ }
 
 //-------------------------------------------------------------------------------------------------
 

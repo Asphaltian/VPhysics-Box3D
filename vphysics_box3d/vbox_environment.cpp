@@ -9,7 +9,10 @@
 #include "vbox_environment.h"
 #include "vbox_object.h"
 #include "vbox_collide.h"
-#include "vbox_controllers.h"
+#include "vbox_controller_shadow.h"
+#include "vbox_controller_player.h"
+#include "vbox_controller_motion.h"
+#include "vbox_controller_fluid.h"
 #include "vbox_constraints.h"
 #include "vbox_surfaceprops.h"
 

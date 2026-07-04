@@ -3,7 +3,10 @@ set(_sdk_public "${CMAKE_SOURCE_DIR}/sdk/mini-source-sdk/${VOX_SDK}/src/public")
 set(_sources
     vbox_collide.cpp
     vbox_constraints.cpp
-    vbox_controllers.cpp
+    vbox_controller_fluid.cpp
+    vbox_controller_motion.cpp
+    vbox_controller_player.cpp
+    vbox_controller_shadow.cpp
     vbox_environment.cpp
     vbox_interface.cpp
     vbox_keyvalues_schema.cpp
@@ -18,7 +21,10 @@ set(_headers
     cbase.h
     vbox_collide.h
     vbox_constraints.h
-    vbox_controllers.h
+    vbox_controller_fluid.h
+    vbox_controller_motion.h
+    vbox_controller_player.h
+    vbox_controller_shadow.h
     vbox_environment.h
     vbox_interface.h
     vbox_keyvalues_schema.h

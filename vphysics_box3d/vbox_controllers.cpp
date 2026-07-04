@@ -16,8 +16,8 @@
 #include "tier0/memdbgon.h"
 
 //-------------------------------------------------------------------------------------------------
-// Shadow controller. The object stays dynamic; a velocity servo drives it to the game's target each step,
-// so held objects push with bounded force and yield to what they cannot move.
+// Shadow controller. The object is driven kinematically toward the game's target, so dynamic
+// bodies can never push it off course (doors, lifts, NPC-driven objects).
 //-------------------------------------------------------------------------------------------------
 
 // A contact normal.z below this (pointing down out of the surface the body rests on) counts as ground.
@@ -35,56 +35,27 @@ static Box3DPhysicsObject *ContactOther( const b3ContactData &contact, Box3DPhys
 		: pA;
 }
 
-// Is the body pressing on something below it?
-static bool IsBodyOnGround( Box3DPhysicsObject *pObject )
-{
-	b3ContactData contacts[ 16 ];
-	const int nCount = b3Body_GetContactData( pObject->GetBodyID(), contacts, 16 );
-	for ( int i = 0; i < nCount; i++ )
-	{
-		const bool bSelfIsA = static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( contacts[ i ].shapeIdA ) ) ) == pObject;
-		for ( int j = 0; j < contacts[ i ].manifoldCount; j++ )
-		{
-			const b3Manifold &manifold = contacts[ i ].manifolds[ j ];
-			if ( manifold.pointCount <= 0 )
-				continue;
-
-			const float flIntoOtherZ = bSelfIsA ? manifold.normal.z : -manifold.normal.z;
-			if ( flIntoOtherZ < kGroundNormalZ )
-				return true;
-		}
-	}
-	return false;
-}
-
 Box3DPhysicsShadowController::Box3DPhysicsShadowController( Box3DPhysicsObject *pObject, bool allowTranslation, bool allowRotation )
 	: m_pObject( pObject )
 	, m_allowTranslation( allowTranslation )
 	, m_allowRotation( allowRotation )
 {
-	m_bWasStatic = m_pObject->IsStatic();
-	m_savedMass = m_pObject->GetMass();
-
 	const b3BodyId bodyId = m_pObject->GetBodyID();
-	if ( !m_bWasStatic )
-	{
-		b3Body_SetType( bodyId, b3_dynamicBody );
-		if ( !m_allowRotation )
-			b3Body_SetMotionLocks( bodyId, b3MotionLocks{ false, false, false, true, true, true } );
-		if ( !m_allowTranslation )
-		{
-			m_pObject->SetMass( VPHYSICS_MAX_MASS );
-			b3Body_SetGravityScale( bodyId, 0.0f );
-		}
-		b3Body_EnableSleep( bodyId, false );
-		b3Body_SetAwake( bodyId, true );
-	}
+
+	m_savedBodyType = b3Body_GetType( bodyId );
+	b3Body_SetType( bodyId, b3_kinematicBody );
+
+	m_savedMaterialIndex = m_pObject->GetMaterialIndex();
+	UseShadowMaterial( true );
 
 	m_savedCallbackFlags = m_pObject->GetCallbackFlags();
 	unsigned short uFlags = m_savedCallbackFlags | CALLBACK_SHADOW_COLLISION;
 	uFlags &= ~CALLBACK_GLOBAL_FRICTION;
 	uFlags &= ~CALLBACK_GLOBAL_COLLIDE_STATIC;
 	m_pObject->SetCallbackFlags( uFlags );
+	m_pObject->EnableDrag( false );
+
+	m_pObject->GetPosition( &m_targetPosition, &m_targetAngles );
 }
 
 Box3DPhysicsShadowController::~Box3DPhysicsShadowController()
@@ -92,20 +63,18 @@ Box3DPhysicsShadowController::~Box3DPhysicsShadowController()
 	const b3BodyId bodyId = m_pObject->GetBodyID();
 	const bool bMarkedForDelete = ( m_pObject->GetCallbackFlags() & CALLBACK_MARKED_FOR_DELETE ) != 0;
 
-	if ( !bMarkedForDelete && !m_bWasStatic && b3Body_IsValid( bodyId ) )
-	{
-		b3Body_SetMotionLocks( bodyId, b3MotionLocks{} );
-		if ( !m_allowTranslation )
-		{
-			m_pObject->SetMass( m_savedMass );
-			b3Body_SetGravityScale( bodyId, 1.0f );
-		}
-		b3Body_EnableSleep( bodyId, true );
-		b3Body_SetAwake( bodyId, true );
-	}
-
 	if ( !bMarkedForDelete )
+	{
 		m_pObject->SetCallbackFlags( m_savedCallbackFlags );
+		m_pObject->EnableDrag( true );
+		UseShadowMaterial( false );
+
+		if ( b3Body_IsValid( bodyId ) )
+		{
+			b3Body_SetType( bodyId, m_savedBodyType );
+			b3Body_SetAwake( bodyId, true );
+		}
+	}
 }
 
 void Box3DPhysicsShadowController::Update( const Vector &position, const QAngle &angles, float timeOffset )
@@ -176,12 +145,18 @@ void Box3DPhysicsShadowController::GetLastImpulse( Vector *pOut )
 		*pOut = m_lastImpulse;
 }
 
-void Box3DPhysicsShadowController::UseShadowMaterial( bool )
+void Box3DPhysicsShadowController::UseShadowMaterial( bool bUseShadowMaterial )
 {
+	const int nCurrent = m_pObject->GetMaterialIndex();
+	const int nTarget = bUseShadowMaterial ? MATERIAL_INDEX_SHADOW : m_savedMaterialIndex;
+	if ( nTarget != nCurrent )
+		m_pObject->SetMaterialIndex( nTarget );
 }
 
-void Box3DPhysicsShadowController::ObjectMaterialChanged( int )
+void Box3DPhysicsShadowController::ObjectMaterialChanged( int materialIndex )
 {
+	if ( materialIndex != MATERIAL_INDEX_SHADOW )
+		m_savedMaterialIndex = materialIndex;
 }
 
 float Box3DPhysicsShadowController::GetTargetPosition( Vector *pPositionOut, QAngle *pAnglesOut )
@@ -209,85 +184,32 @@ void Box3DPhysicsShadowController::GetMaxSpeed( float *pMaxSpeedOut, float *pMax
 
 void Box3DPhysicsShadowController::OnPreSimulate( float flDeltaTime )
 {
-	if ( m_bWasStatic || flDeltaTime <= 0.0f )
-		return;
-
 	if ( !m_enabled )
-	{
-		m_lastPosition = vec3_origin;
 		return;
-	}
 
-	float flFraction = 1.0f;
+	const b3BodyId bodyId = m_pObject->GetBodyID();
+
 	if ( m_secondsToArrival > 0.0f )
-		flFraction = Min( flDeltaTime / m_secondsToArrival, 1.0f );
+	{
+		b3WorldTransform target;
+		target.p = SourceToBox::Distance( m_targetPosition );
+		target.q = SourceToBox::Angle( m_targetAngles );
+		b3Body_SetTargetTransform( bodyId, target, m_secondsToArrival, true );
+	}
+	else
+	{
+		b3Body_SetTransform( bodyId, SourceToBox::Distance( m_targetPosition ), SourceToBox::Angle( m_targetAngles ) );
+		b3Body_SetLinearVelocity( bodyId, b3Vec3{} );
+		b3Body_SetAngularVelocity( bodyId, b3Vec3{} );
+		b3Body_SetAwake( bodyId, true );
+		m_enabled = false;
+	}
 
 	m_secondsToArrival = Max( m_secondsToArrival - flDeltaTime, 0.0f );
-
-	if ( flFraction <= 0.0f )
-		return;
-
-	Vector vecPosition;
-	QAngle angAngles;
-	m_pObject->GetPosition( &vecPosition, &angAngles );
-
-	Vector vecDelta = m_targetPosition - vecPosition;
-
-	if ( m_teleportDistance > 0.0f )
-	{
-		// Measure error against the last controller estimate when there is one.
-		const float flErrorSqr = m_lastPosition != vec3_origin
-			? ( vecPosition - m_lastPosition ).LengthSqr()
-			: vecDelta.LengthSqr();
-
-		if ( flErrorSqr > m_teleportDistance * m_teleportDistance )
-		{
-			if ( m_pObject->IsCollisionEnabled() )
-			{
-				m_pObject->EnableCollisions( false );
-				m_pObject->SetPosition( m_targetPosition, m_targetAngles, true );
-				m_pObject->EnableCollisions( true );
-			}
-			else
-			{
-				m_pObject->SetPosition( m_targetPosition, m_targetAngles, true );
-			}
-			vecPosition = m_targetPosition;
-			angAngles = m_targetAngles;
-			vecDelta = vec3_origin;
-		}
-	}
-
-	Vector vecLinear;
-	AngularImpulse vecAngular;
-	m_pObject->GetVelocity( &vecLinear, &vecAngular );
-
-	const float flScale = flFraction / flDeltaTime;
-
-	ShadowComputeVelocity( vecLinear, vecDelta, m_maxSpeed, m_maxDampSpeed, flScale, m_dampFactor, &m_lastImpulse );
-	m_lastPosition = vecPosition + vecLinear * flDeltaTime;
-
-	const Vector vecDeltaAngles = ShadowRotationDeltaDegrees( angAngles, m_targetAngles );
-	ShadowComputeVelocity( vecAngular, vecDeltaAngles, m_maxAngular, m_maxDampAngular, flScale, m_dampFactor );
-
-	if ( m_allowTranslation )
-	{
-		// Press on whatever is below with no more than one step of gravity.
-		const b3Vec3 vGravity = b3World_GetGravity( m_pObject->GetEnvironment()->GetWorldId() );
-		const float flGravDt = BoxToSource::Distance( sqrtf( b3Dot( vGravity, vGravity ) ) ) * flDeltaTime;
-		if ( m_lastImpulse.z < -flGravDt && IsBodyOnGround( m_pObject ) )
-		{
-			const float flDeltaZ = -flGravDt - m_lastImpulse.z;
-			vecLinear.z += flDeltaZ;
-			m_lastImpulse.z += flDeltaZ;
-		}
-	}
-
-	m_pObject->SetVelocity( &vecLinear, &vecAngular );
 }
 
 //-------------------------------------------------------------------------------------------------
-// Player controller. The shadow is a real dynamic object; 
+// Player controller. The shadow is a real dynamic object;
 // the controller servos its velocity to the game's position and limits how hard it may drive 
 // into contacts (that limit is what makes pushing respect mass).
 //-------------------------------------------------------------------------------------------------
@@ -805,26 +727,27 @@ void Box3DPhysicsMotionController::OnPreSimulate( float flDeltaTime )
 		vecLinear *= flDeltaTime;
 		angLocalAngular *= flDeltaTime;
 
-		// The event's angular value is always in the object's local space.
-		Vector vecWorldAngular;
-		pObject->LocalToWorldVector( &vecWorldAngular, angLocalAngular );
-
-		// The linear value is local or global depending on the result type.
+		// The linear value is local or global depending on the result type; the angular value is
+		// always in the object's local space. AddVelocity takes it as-is; ApplyTorqueCenter takes
+		// a world-space torque impulse, so rotate it out for the force path.
 		Vector vecWorldLinear = vecLinear;
 		if ( result == IMotionEvent::SIM_LOCAL_ACCELERATION || result == IMotionEvent::SIM_LOCAL_FORCE )
 			pObject->LocalToWorldVector( &vecWorldLinear, vecLinear );
+
+		Vector vecWorldAngular;
+		pObject->LocalToWorldVector( &vecWorldAngular, angLocalAngular );
 
 		switch ( result )
 		{
 			case IMotionEvent::SIM_GLOBAL_ACCELERATION:
 			case IMotionEvent::SIM_LOCAL_ACCELERATION:
-				pObject->AddVelocity( &vecWorldLinear, &vecWorldAngular );
+				pObject->AddVelocity( &vecWorldLinear, &angLocalAngular );
 				break;
 
 			case IMotionEvent::SIM_GLOBAL_FORCE:
 			case IMotionEvent::SIM_LOCAL_FORCE:
 				pObject->ApplyForceCenter( vecWorldLinear );
-				pObject->ApplyTorqueCenter( angLocalAngular );
+				pObject->ApplyTorqueCenter( vecWorldAngular );
 				break;
 
 			case IMotionEvent::SIM_NOTHING:

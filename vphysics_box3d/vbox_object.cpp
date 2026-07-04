@@ -219,10 +219,10 @@ float Box3DPhysicsObject::GetInvMass() const	{ return m_flCachedInvMass; }
 
 Vector Box3DPhysicsObject::GetInertia() const
 {
+	// IVP hands the game its raw kg m^2 diagonal (axis conversion only, no unit scaling); the game
+	// feeds these values straight back into SetInertia.
 	const b3Matrix3 inertia = b3Body_GetLocalRotationalInertia( m_BodyId );
-	// kg m^2 -> kg in^2
-	const float k = MetresToInches * MetresToInches;
-	return Vector( fabsf( inertia.cx.x ) * k, fabsf( inertia.cy.y ) * k, fabsf( inertia.cz.z ) * k );
+	return Vector( fabsf( inertia.cx.x ), fabsf( inertia.cy.y ), fabsf( inertia.cz.z ) );
 }
 
 Vector Box3DPhysicsObject::GetInvInertia() const
@@ -234,7 +234,20 @@ Vector Box3DPhysicsObject::GetInvInertia() const
 		inertia.z > 0.0f ? 1.0f / inertia.z : 0.0f );
 }
 
-void Box3DPhysicsObject::SetInertia( const Vector & )	{ Log_Stub( LOG_VBox3D ); }
+void Box3DPhysicsObject::SetInertia( const Vector &inertia )
+{
+	if ( m_bStatic )
+		return;
+
+	const Vector vecAbs = Vector( fabsf( inertia.x ), fabsf( inertia.y ), fabsf( inertia.z ) );
+
+	b3MassData massData = b3Body_GetMassData( m_BodyId );
+	massData.inertia = b3Matrix3{};
+	massData.inertia.cx.x = vecAbs.x;
+	massData.inertia.cy.y = vecAbs.y;
+	massData.inertia.cz.z = vecAbs.z;
+	b3Body_SetMassData( m_BodyId, massData );
+}
 
 void Box3DPhysicsObject::SetDamping( const float *speed, const float *rot )
 {
@@ -342,7 +355,12 @@ void Box3DPhysicsObject::SetVelocity( const Vector *velocity, const AngularImpul
 	const bool bVel = velocity && velocity->IsValid();
 	const bool bAng = angularVelocity && angularVelocity->IsValid();
 	if ( bVel ) b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( *velocity ) );
-	if ( bAng ) b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( *angularVelocity ) );
+	if ( bAng )
+	{
+		Vector vecWorldAngular;
+		LocalToWorldVector( &vecWorldAngular, *angularVelocity );
+		b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( vecWorldAngular ) );
+	}
 	if ( bVel || bAng ) b3Body_SetAwake( m_BodyId, true );
 }
 
@@ -374,7 +392,9 @@ void Box3DPhysicsObject::GetVelocity( Vector *velocity, AngularImpulse *angularV
 			if ( !m_bStatic )
 				b3Body_SetAngularVelocity( m_BodyId, w );
 		}
-		*angularVelocity = BoxToSource::AngularImpulse( w );
+		// The interface's angular velocity is in object space (IVP's core frame).
+		const Vector vecWorldAngular = BoxToSource::AngularImpulse( w );
+		WorldToLocalVector( angularVelocity, vecWorldAngular );
 		if ( !angularVelocity->IsValid() )
 			*angularVelocity = vec3_origin;
 	}
@@ -404,7 +424,12 @@ void Box3DPhysicsObject::AddVelocity( const Vector *velocity, const AngularImpul
 	if ( m_bStatic )
 		return;
 	if ( velocity )        b3Body_SetLinearVelocity( m_BodyId, b3Add( b3Body_GetLinearVelocity( m_BodyId ), SourceToBox::Distance( *velocity ) ) );
-	if ( angularVelocity ) b3Body_SetAngularVelocity( m_BodyId, b3Add( b3Body_GetAngularVelocity( m_BodyId ), SourceToBox::AngularImpulse( *angularVelocity ) ) );
+	if ( angularVelocity )
+	{
+		Vector vecWorldAngular;
+		LocalToWorldVector( &vecWorldAngular, *angularVelocity );
+		b3Body_SetAngularVelocity( m_BodyId, b3Add( b3Body_GetAngularVelocity( m_BodyId ), SourceToBox::AngularImpulse( vecWorldAngular ) ) );
+	}
 	if ( velocity || angularVelocity ) b3Body_SetAwake( m_BodyId, true );
 }
 
@@ -462,10 +487,8 @@ void Box3DPhysicsObject::ApplyTorqueCenter( const AngularImpulse &torque )
 	if ( m_bStatic )
 		return;
 
-	// The game's angular impulses are in object space (IVP applied them to the core frame).
-	Vector vecWorld;
-	LocalToWorldVector( &vecWorld, torque );
-	b3Body_ApplyAngularImpulse( m_BodyId, SourceToBox::AngularImpulse( vecWorld ), true );
+	// IVP applies this torque impulse in world space (async_rot_push_core_multiple_ws).
+	b3Body_ApplyAngularImpulse( m_BodyId, SourceToBox::AngularImpulse( torque ), true );
 }
 
 void Box3DPhysicsObject::CalculateForceOffset( const Vector &forceVector, const Vector &worldPosition, Vector *centerForce, AngularImpulse *centerTorque ) const
@@ -533,9 +556,10 @@ float Box3DPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &
 	QAngle angles;
 	GetPosition( &position, &angles );
 
-	Vector linearVelocity;
-	AngularImpulse angularVelocity;
-	GetVelocity( &linearVelocity, &angularVelocity );
+	// The servo math below runs in world space; use raw body velocities rather than the
+	// interface's object-space angular values.
+	Vector linearVelocity = BoxToSource::Distance( b3Body_GetLinearVelocity( m_BodyId ) );
+	AngularImpulse angularVelocity = BoxToSource::AngularImpulse( b3Body_GetAngularVelocity( m_BodyId ) );
 
 	const float flFraction = flSecondsToArrival > 0.0f ? Min( flDeltaTime / flSecondsToArrival, 1.0f ) : 1.0f;
 	flSecondsToArrival = Max( flSecondsToArrival - flDeltaTime, 0.0f );
@@ -575,7 +599,12 @@ float Box3DPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &
 		}
 	}
 
-	SetVelocity( &linearVelocity, &angularVelocity );
+	if ( !m_bStatic )
+	{
+		b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( linearVelocity ) );
+		b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( angularVelocity ) );
+		b3Body_SetAwake( m_BodyId, true );
+	}
 
 	return flSecondsToArrival;
 }

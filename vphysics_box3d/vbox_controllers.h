@@ -42,7 +42,6 @@ private:
 
 	Vector	m_targetPosition = vec3_origin;
 	QAngle	m_targetAngles = vec3_angle;
-	Vector	m_lastPosition = vec3_origin;
 	Vector	m_lastImpulse = vec3_origin;
 	float	m_secondsToArrival = 0.0f;
 	float	m_maxSpeed = 0.0f;
@@ -50,14 +49,13 @@ private:
 	float	m_maxAngular = 0.0f;
 	float	m_maxDampAngular = 0.0f;
 	float	m_teleportDistance = 0.0f;
-	float	m_dampFactor = 1.0f;
-	float	m_savedMass = 0.0f;
 
+	b3BodyType m_savedBodyType = b3_staticBody;
+	int		m_savedMaterialIndex = 0;
 	unsigned short m_savedCallbackFlags = 0;
 	bool	m_allowTranslation = true;
 	bool	m_allowRotation = true;
 	bool	m_isPhysicallyControlled = false;
-	bool	m_bWasStatic = false;
 	bool	m_enabled = false;
 };
 

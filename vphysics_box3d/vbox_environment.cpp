@@ -46,13 +46,23 @@ namespace
 	// Ask the game's solver whether two shapes' objects may collide (collision groups, no-collide, debris).
 	bool ShapesCollide( void *context, b3ShapeId shapeA, b3ShapeId shapeB )
 	{
-		IPhysicsCollisionSolver *pSolver = static_cast< Box3DPhysicsEnvironment * >( context )->GetCollisionSolver();
-		if ( !pSolver || !b3Shape_IsValid( shapeA ) || !b3Shape_IsValid( shapeB ) )
+		if ( !b3Shape_IsValid( shapeA ) || !b3Shape_IsValid( shapeB ) )
 			return true;
+
 		Box3DPhysicsObject *pA = static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( shapeA ) ) );
 		Box3DPhysicsObject *pB = static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( shapeB ) ) );
 		if ( !pA || !pB )
 			return true;
+
+		if ( !pA->IsCollisionEnabled() || !pB->IsCollisionEnabled() )
+			return false;
+		if ( ( pA->GetCallbackFlags() | pB->GetCallbackFlags() ) & CALLBACK_MARKED_FOR_DELETE )
+			return false;
+
+		IPhysicsCollisionSolver *pSolver = static_cast< Box3DPhysicsEnvironment * >( context )->GetCollisionSolver();
+		if ( !pSolver )
+			return true;
+
 		return pSolver->ShouldCollide( pA, pB, pA->GetGameData(), pB->GetGameData() ) != 0;
 	}
 

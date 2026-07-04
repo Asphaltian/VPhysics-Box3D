@@ -28,8 +28,9 @@ namespace
 			return;
 
 		shapeDef.baseMaterial.friction = Max( pSurface->physics.friction, 0.0f );
-		// Restitution >= 1 adds energy every bounce and blows stacks up.
-		shapeDef.baseMaterial.restitution = clamp( pSurface->physics.elasticity, 0.0f, 1.0f );
+		// Raw surfaceprop elasticity (can be far above 1, e.g. Metal_bouncy = 1000); the combined
+		// product is clamped in Box3DRestitutionCombine, matching IVP's get_elasticity.
+		shapeDef.baseMaterial.restitution = pSurface->physics.elasticity;
 		if ( pSurface->physics.density > 0.0f )
 			shapeDef.density = pSurface->physics.density;	// kg/m^3 in both, geometry is in metres
 	}
@@ -37,7 +38,7 @@ namespace
 	// IVP combines both surfaces' coefficients as a product; Box3D defaults to
 	// max(restitution) and sqrt(friction), which makes props far too bouncy and slightly too grippy.
 	float Box3DFrictionCombine( float a, uint64_t, float b, uint64_t )		{ return a * b; }
-	float Box3DRestitutionCombine( float a, uint64_t, float b, uint64_t )	{ return a * b; }
+	float Box3DRestitutionCombine( float a, uint64_t, float b, uint64_t )	{ return clamp( a * b, 0.0f, 1.0f ); }
 
 	// Ask the game's solver whether two shapes' objects may collide (collision groups, no-collide, debris).
 	bool ShapesCollide( void *context, b3ShapeId shapeA, b3ShapeId shapeB )

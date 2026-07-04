@@ -269,7 +269,7 @@ void Box3DPhysicsObject::SetMaterialIndex( int materialIndex )
 		return;
 
 	const float flFriction = Max( pSurface->physics.friction, 0.0f );
-	const float flRestitution = clamp( pSurface->physics.elasticity, 0.0f, 1.0f );
+	const float flRestitution = pSurface->physics.elasticity;
 	ForEachShape( m_BodyId, [ & ]( b3ShapeId shape )
 	{
 		b3Shape_SetFriction( shape, flFriction );

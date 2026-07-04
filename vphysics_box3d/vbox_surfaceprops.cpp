@@ -130,6 +130,16 @@ int Box3DPhysicsSurfaceProps::ParseSurfaceData( const char *pFilename, const cha
 			m_SurfaceProps[ id ] = values;
 	}
 
+	if ( m_ShadowFallbackIdx < 0 )
+	{
+		Box3DSurfaceProp prop = {};
+		prop.data.physics = m_SurfaceProps[ BaseMaterialIdx ].data.physics;
+		prop.data.physics.elasticity	= 1e-3f;
+		prop.data.physics.friction		= 0.8f;
+		m_SurfaceProps[ "$MATERIAL_INDEX_SHADOW" ] = prop;
+		m_ShadowFallbackIdx = int( m_SurfaceProps.Find( "$MATERIAL_INDEX_SHADOW" ) );
+	}
+
 	return m_SurfaceProps.GetNumStrings();
 }
 
@@ -140,9 +150,50 @@ int Box3DPhysicsSurfaceProps::SurfacePropCount( void ) const
 
 //-------------------------------------------------------------------------------------------------
 
+bool Box3DPhysicsSurfaceProps::IsReservedMaterialIndex( int nMaterialIndex ) const
+{
+	return nMaterialIndex > 127;
+}
+
+int Box3DPhysicsSurfaceProps::GetReservedSurfaceIndex( const char *pSurfacePropName ) const
+{
+	if ( !Q_stricmp( pSurfacePropName, "$MATERIAL_INDEX_SHADOW" ) )
+		return MATERIAL_INDEX_SHADOW;
+
+	return -1;
+}
+
+int Box3DPhysicsSurfaceProps::GetReservedFallBack( int nMaterialIndex ) const
+{
+	switch ( nMaterialIndex )
+	{
+		case MATERIAL_INDEX_SHADOW:
+			if ( m_ShadowFallbackIdx >= 0 )
+				return m_ShadowFallbackIdx;
+	}
+
+	return 0;
+}
+
+UtlSymId_t Box3DPhysicsSurfaceProps::ResolveSurfaceIndex( int surfaceDataIndex ) const
+{
+	if ( IsReservedMaterialIndex( surfaceDataIndex ) )
+		surfaceDataIndex = GetReservedFallBack( surfaceDataIndex );
+
+	if ( surfaceDataIndex < 0 || surfaceDataIndex >= int( m_SurfaceProps.GetNumStrings() ) )
+		return BaseMaterialIdx;
+
+	return UtlSymId_t( surfaceDataIndex );
+}
+
 int Box3DPhysicsSurfaceProps::GetSurfaceIndex( const char *pSurfacePropName ) const
 {
-	// TODO(Josh): Something about reserved props for $MATERIAL_INDEX_SHADOW
+	if ( pSurfacePropName[ 0 ] == '$' )
+	{
+		const int nReserved = GetReservedSurfaceIndex( pSurfacePropName );
+		if ( nReserved >= 0 )
+			return nReserved;
+	}
 
 	UtlSymId_t nIndex = m_SurfaceProps.Find( pSurfacePropName );
 	if ( nIndex != m_SurfaceProps.InvalidIndex() )
@@ -153,11 +204,7 @@ int Box3DPhysicsSurfaceProps::GetSurfaceIndex( const char *pSurfacePropName ) co
 
 void Box3DPhysicsSurfaceProps::GetPhysicsProperties( int surfaceDataIndex, float *density, float *thickness, float *friction, float *elasticity ) const
 {
-	const UtlSymId_t id = surfaceDataIndex >= 0 && surfaceDataIndex < int( m_SurfaceProps.GetNumStrings() )
-		? UtlSymId_t( surfaceDataIndex )
-		: BaseMaterialIdx;
-
-	const Box3DSurfaceProp& prop = m_SurfaceProps[ id ];
+	const Box3DSurfaceProp& prop = m_SurfaceProps[ ResolveSurfaceIndex( surfaceDataIndex ) ];
 	if ( density )		*density	= prop.data.physics.density;
 	if ( thickness )	*thickness	= prop.data.physics.thickness;
 	if ( friction )		*friction	= prop.data.physics.friction;
@@ -168,11 +215,7 @@ void Box3DPhysicsSurfaceProps::GetPhysicsProperties( int surfaceDataIndex, float
 
 surfacedata_t *Box3DPhysicsSurfaceProps::GetSurfaceData( int surfaceDataIndex )
 {
-	const UtlSymId_t id = surfaceDataIndex >= 0 && surfaceDataIndex < int( m_SurfaceProps.GetNumStrings() )
-		? UtlSymId_t( surfaceDataIndex )
-		: BaseMaterialIdx;
-
-	Box3DSurfaceProp& prop = m_SurfaceProps[ id ];
+	Box3DSurfaceProp& prop = m_SurfaceProps[ ResolveSurfaceIndex( surfaceDataIndex ) ];
 	return &prop.data;
 }
 
@@ -185,6 +228,9 @@ const char *Box3DPhysicsSurfaceProps::GetString( unsigned short stringTableIndex
 
 const char *Box3DPhysicsSurfaceProps::GetPropName( int surfaceDataIndex ) const
 {
+	if ( IsReservedMaterialIndex( surfaceDataIndex ) )
+		surfaceDataIndex = GetReservedFallBack( surfaceDataIndex );
+
 	if ( surfaceDataIndex < 0 || surfaceDataIndex >= int ( m_SurfaceProps.GetNumStrings() ) )
 		return nullptr;
 	return m_SurfaceProps.String( surfaceDataIndex );
@@ -204,11 +250,7 @@ void Box3DPhysicsSurfaceProps::GetPhysicsParameters( int surfaceDataIndex, surfa
 	if ( !pParamsOut )
 		return;
 
-	const UtlSymId_t id = surfaceDataIndex >= 0 && surfaceDataIndex < int( m_SurfaceProps.GetNumStrings() )
-		? UtlSymId_t( surfaceDataIndex )
-		: BaseMaterialIdx;
-
-	const Box3DSurfaceProp& prop = m_SurfaceProps[ id ];
+	const Box3DSurfaceProp& prop = m_SurfaceProps[ ResolveSurfaceIndex( surfaceDataIndex ) ];
 	*pParamsOut = prop.data.physics;
 }
 
@@ -262,8 +304,13 @@ int Box3DPhysicsSurfaceProps::RemapIVPMaterialIndex( int nIndex ) const
 
 const char *Box3DPhysicsSurfaceProps::GetReservedMaterialName( int nMaterialIndex ) const
 {
-	Log_Stub( LOG_VBox3D );
-	return "default";
+	switch ( nMaterialIndex )
+	{
+		case MATERIAL_INDEX_SHADOW:
+			return "$MATERIAL_INDEX_SHADOW";
+	}
+
+	return nullptr;
 }
 #endif
 

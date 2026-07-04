@@ -1,6 +1,11 @@
 
 #pragma once
 
+enum
+{
+	MATERIAL_INDEX_SHADOW = 0xF000,
+};
+
 struct Box3DSurfaceProp
 {
 	surfacedata_t data;
@@ -60,8 +65,14 @@ public:
 private:
 	static Box3DPhysicsSurfaceProps s_PhysicsSurfaceProps;
 
+	bool				IsReservedMaterialIndex( int nMaterialIndex ) const;
+	int					GetReservedSurfaceIndex( const char *pSurfacePropName ) const;
+	int					GetReservedFallBack( int nMaterialIndex ) const;
+	UtlSymId_t			ResolveSurfaceIndex( int surfaceDataIndex ) const;
+
 	CUtlStringMap< Box3DSurfaceProp >	m_SurfaceProps;
 	CUtlSymbolTable						m_SoundStrings;
+	int									m_ShadowFallbackIdx = -1;
 
 	static constexpr UtlSymId_t BaseMaterialIdx = UtlSymId_t( 0 );
 

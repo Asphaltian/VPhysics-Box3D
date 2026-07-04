@@ -379,28 +379,23 @@ void Box3DPhysicsPlayerController::SetObjectInternal( Box3DPhysicsObject *pObjec
 	{
 		const b3BodyId oldId = m_pObject->GetBodyID();
 		if ( b3Body_IsValid( oldId ) )
-		{
-			b3Body_SetMotionLocks( oldId, b3MotionLocks{} );
-			b3Body_EnableSleep( oldId, true );
-		}
+			b3Body_SetAngularDamping( oldId, m_flSavedAngularDamping );
 		m_pObject->SetCallbackFlags( m_pObject->GetCallbackFlags() & ~CALLBACK_IS_PLAYER_CONTROLLER );
 	}
 
 	m_pObject = pObject;
-	m_hasCommand = false;
 	SetGround( nullptr );
 
 	if ( m_pObject )
 	{
 		const b3BodyId bodyId = m_pObject->GetBodyID();
 
-		// IVP damps the controlled core's rotation to a standstill; locking is the same thing.
+		// IVP replaces the controlled core's rot_speed_damp_factor with (100,100,100); heavy
+		// angular damping is the box3d equivalent.
 		// Which hull collides is the game's business (EnableCollisions via SetVCollisionState).
-		b3Body_SetType( bodyId, b3_dynamicBody );
-		b3Body_SetGravityScale( bodyId, 1.0f );
-		b3Body_SetMotionLocks( bodyId, b3MotionLocks{ false, false, false, true, true, true } );
-		b3Body_EnableSleep( bodyId, false );
-		b3Body_SetAwake( bodyId, true );
+		m_pObject->EnableDrag( false );
+		m_flSavedAngularDamping = b3Body_GetAngularDamping( bodyId );
+		b3Body_SetAngularDamping( bodyId, 100.0f );
 
 		m_pObject->SetCallbackFlags( m_pObject->GetCallbackFlags() | CALLBACK_IS_PLAYER_CONTROLLER );
 	}
@@ -454,9 +449,18 @@ void Box3DPhysicsPlayerController::SetEventHandler( IPhysicsPlayerControllerEven
 	m_pHandler = handler;
 }
 
+static bool IsControlledByGame( Box3DPhysicsObject *pObject )
+{
+	IPhysicsShadowController *pShadow = pObject->GetShadowController();
+	if ( pShadow && !pShadow->IsPhysicallyControlled() )
+		return true;
+
+	return ( pObject->GetCallbackFlags() & CALLBACK_IS_PLAYER_CONTROLLER ) != 0;
+}
+
 bool Box3DPhysicsPlayerController::IsInContact()
 {
-	if ( !m_pObject )
+	if ( !m_pObject || !m_pObject->IsCollisionEnabled() )
 		return false;
 
 	b3ContactData contacts[ 32 ];
@@ -470,11 +474,11 @@ bool Box3DPhysicsPlayerController::IsInContact()
 			continue;
 
 		Box3DPhysicsObject *pOther = ContactOther( contacts[ i ], m_pObject );
-		if ( !pOther || !pOther->IsMoveable() )
+		if ( !pOther || !pOther->IsCollisionEnabled() || !pOther->IsMoveable() )
 			continue;
 
 		// Skip game-controlled shadow objects; we want physically simulated contact.
-		if ( pOther->GetCallbackFlags() & CALLBACK_SHADOW_COLLISION )
+		if ( IsControlledByGame( pOther ) )
 			continue;
 
 		return true;
@@ -534,15 +538,14 @@ void Box3DPhysicsPlayerController::GetShadowVelocity( Vector *velocity )
 	if ( !velocity || !m_pObject )
 		return;
 
-	if ( m_hasCommand )
-		*velocity = m_commandedVelocity;
-	else
-		m_pObject->GetVelocity( velocity, nullptr );
+	m_pObject->GetVelocity( velocity, nullptr );
 
 	if ( m_pGround )
 	{
+		Vector vGroundPoint;
+		m_pGround->LocalToWorld( &vGroundPoint, m_groundPosition );
 		Vector vBaseVelocity;
-		m_pGround->GetVelocityAtPoint( m_targetPosition, &vBaseVelocity );
+		m_pGround->GetVelocityAtPoint( vGroundPoint, &vBaseVelocity );
 		*velocity -= vBaseVelocity;
 	}
 }
@@ -606,13 +609,12 @@ int Box3DPhysicsPlayerController::TryTeleportObject()
 
 void Box3DPhysicsPlayerController::OnPreSimulate( float flDeltaTime )
 {
-	if ( !m_enable )
-		m_hasCommand = false;
-
 	if ( !m_pObject || !m_enable || flDeltaTime <= 0.0f )
 		return;
 
 	const b3BodyId bodyId = m_pObject->GetBodyID();
+	if ( !b3Body_IsAwake( bodyId ) )
+		return;
 
 	Vector vPosition, vSpeed;
 	m_pObject->GetPosition( &vPosition, nullptr );
@@ -633,7 +635,12 @@ void Box3DPhysicsPlayerController::OnPreSimulate( float flDeltaTime )
 	if ( vDeltaPos.LengthSqr() > m_maxDeltaPosition * m_maxDeltaPosition )
 	{
 		if ( TryTeleportObject() )
+		{
+			// IVP modifies core speed in place, so the ground base-velocity subtraction
+			// persists across the teleport.
+			b3Body_SetLinearVelocity( bodyId, SourceToBox::Distance( vSpeed ) );
 			return;
+		}
 	}
 
 	float flFraction = 1.0f;
@@ -718,11 +725,6 @@ void Box3DPhysicsPlayerController::OnPreSimulate( float flDeltaTime )
 	}
 
 	b3Body_SetLinearVelocity( bodyId, SourceToBox::Distance( vSpeed ) );
-
-	// IVP's controller runs after the contact solver, so the game's velocity read-back sees the
-	// commanded velocity rather than contact noise; GetShadowVelocity reports this to match.
-	m_commandedVelocity = vSpeed;
-	m_hasCommand = true;
 
 	m_secondsToArrival = Max( m_secondsToArrival - flDeltaTime, 0.0f );
 }

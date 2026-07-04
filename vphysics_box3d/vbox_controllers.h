@@ -103,15 +103,14 @@ private:
 	Vector	m_maxSpeed = vec3_origin;
 	Vector	m_currentSpeed = vec3_origin;
 	Vector	m_lastImpulse = vec3_origin;
-	Vector	m_commandedVelocity = vec3_origin;
 	float	m_secondsToArrival = 0.0f;
 	float	m_maxDeltaPosition = 24.0f;
 	float	m_dampFactor = 1.0f;
 	float	m_pushableMassLimit = VPHYSICS_MAX_MASS;
 	float	m_pushableSpeedLimit = 1e4f;
+	float	m_flSavedAngularDamping = 0.0f;
 	bool	m_enable = false;
 	bool	m_updatedSinceLast = false;
-	bool	m_hasCommand = false;
 };
 
 class Box3DPhysicsMotionController final : public IPhysicsMotionController

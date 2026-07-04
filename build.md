@@ -1,18 +1,20 @@
 # Building Vox3D
 
-Vox3D builds with CMake. The Source SDK it targets is a submodule under `sdk/`,
-and a CMake preset selects which variant to build against.
+## Prerequisites
 
-## Get the tree
+- Git
+- CMake 3.25 or newer
+- Windows: Visual Studio 2022 with the "Desktop development with C++" workload
+- Linux: `ninja-build` and gcc (`gcc-multilib` / `g++-multilib` for 32-bit)
 
-Clone with submodules (Box3D and the mini-source-sdk both come in as submodules):
+## Get the code
 
 ```bash
 git clone --recursive https://github.com/Asphaltian/VPhysics-Box3D.git
 cd VPhysics-Box3D
 ```
 
-Already cloned without `--recursive`? Run:
+If you already cloned without `--recursive`, pull the submodules:
 
 ```bash
 git submodule update --init --recursive
@@ -20,55 +22,40 @@ git submodule update --init --recursive
 
 ## Build
 
-Pick a preset (it selects the SDK variant and the target architecture), configure,
-then build:
+Choose the preset for your game and architecture, configure, then build:
 
 ```bash
 cmake --preset gmod-x64
 cmake --build --preset gmod-x64-Release
 ```
 
-The output lands in `build/gmod-x64/bin/Release/vphysics.dll`.
+| Preset | Game | Arch |
+|:---|:---|:---|
+| `gmod-x64` | Garry's Mod | x64 |
+| `gmod-x86` | Garry's Mod | x86 |
+| `sdk2013-mp` | Source SDK 2013 Multiplayer | x86 |
+| `sdk2013-sp` | Source SDK 2013 Singleplayer | x86 |
+| `asw` | Alien Swarm | x86 |
+| `gmod-linux-x64` | Garry's Mod (Linux) | x64 |
+| `gmod-linux-x86` | Garry's Mod (Linux) | x86 |
 
-Available configure presets:
+Every preset has a `-Debug` and `-Release` build (e.g. `gmod-x64-Release`, `sdk2013-mp-Debug`). The result is `build/<preset>/bin/<config>/vphysics.dll` (`vphysics.so` on Linux).
 
-| Preset | SDK variant | Platform | Arch |
-|:---|:---|:---|:---|
-| `gmod-x64` | gmod | Windows (VS 2022) | x64 |
-| `gmod-x86` | gmod | Windows (VS 2022) | x86 |
-| `sdk2013-mp` | Source SDK 2013 MP | Windows (VS 2022) | x86 |
-| `sdk2013-sp` | Source SDK 2013 SP | Windows (VS 2022) | x86 |
-| `asw` | Alien Swarm | Windows (VS 2022) | x86 |
-| `gmod-linux-x64` | gmod | Linux (Ninja, gcc) | x64 |
-| `gmod-linux-x86` | gmod | Linux (Ninja, gcc) | x86 |
+Only Garry's Mod x64 is well tested. Linux is experimental and some variants don't build yet.
 
-Each has matching `-Debug` and `-Release` build presets (e.g. `sdk2013-mp-Debug`).
+If you have a Visual Studio other than 2022, skip the preset and name your generator:
 
-## Linux
+```bash
+cmake -S . -B build/gmod-x64 -G "Visual Studio 18 2026" -A x64 -D VOX_SDK=gmod
+cmake --build build/gmod-x64 --config Release
+```
 
-The Linux presets need `ninja-build` and, for x86, `gcc-multilib`/`g++-multilib`.
-The output is `vphysics.so`. Linux support is experimental: CI builds it as a
-non-blocking job, and some variants do not compile yet.
+## Install
 
-## CI
+Back up the game's own `vphysics.dll`, then drop the one you built in its place. For 64-bit Garry's Mod:
 
-GitHub Actions (`.github/workflows/ci.yml`) builds `gmod-x64` and `gmod-x86` on
-`windows-2022` for every push and pull request, and attempts the Linux presets on
-`ubuntu-22.04` as non-blocking jobs. The Windows jobs upload `vphysics.dll` as
-build artifacts.
+```
+<Steam>/steamapps/common/GarrysMod/bin/win64/vphysics.dll
+```
 
-## SDK libraries
-
-vphysics links tier0, tier1, tier2, mathlib and vstdlib. tier0 and vstdlib are
-always prebuilt import libs (they front game DLLs). tier1, tier2 and mathlib are
-compiled from the `sdk/mini-source-sdk` submodule's own source when the variant
-ships it (`gmod`, `sdk2013-*`), so nothing is committed and the build is fully
-reproducible from the two submodules. The `asw` variant ships no source and links
-its prebuilt tier1/mathlib/tier2/interfaces instead. This is all handled
-automatically by `sdk/CMakeLists.txt`.
-
-## Output
-
-`vphysics.dll` (`vphysics.so` on Linux) is the loadable module. It implements
-`IPhysics` directly on top of the Box3D engine (built as the `box3d` static lib) -
-there is no separate CPU-dispatch loader.
+Other builds go in the matching game's binary directory (`bin/` for 32-bit Garry's Mod, the mod's `bin/` for SDK 2013).

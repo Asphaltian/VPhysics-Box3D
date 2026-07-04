@@ -6,43 +6,42 @@ Work in progress!
 
 ## Status
 
-| Feature | Volt | Vox3D |
-|:--|:--:|:--:|
-| Constraints (except pulleys) | ✔️ | ✔️ |
-| Pulleys | ✔️ | ❌ |
-| Breakable constraints | ❌ | ❌ |
-| Motion controllers | ✔️ | ✔️ |
-| Constraint motors | ✔️ | ✔️ |
-| Ragdolls | ✔️ | ✔️ |
-| Triggers | ✔️ | ❌ |
-| Object touch callbacks | ✔️ | ✔️ |
-| Prop damage / breaking | ✔️ | ✔️ |
-| Fluid events | ✔️ | ✔️ |
-| Prop splashing effects | ✔️ | ✔️ |
-| Wheeled vehicles | ✔️ | ❌ |
-| Raycast vehicles (airboat) | ❌ | ❌ |
-| Shadow controllers (NPCs, doors) | ✔️ | ✔️ |
-| Save / restore | ✔️ | ❌ |
-| Portal support | ✔️ | ❌ |
-| Per-object no-collide callbacks | ✔️ | ✔️ |
-| Crash-resistant solver | ✔️ | ✔️ |
-| Thousands of objects without lag | ✔️ | ✔️ |
-| Multithreaded | ✔️ | ✔️ |
-| Player controller | ✔️ | ✔️ |
+| Feature | VPhysics | Volt | Vox3D |
+|:--|:--:|:--:|:--:|
+| Constraints (except pulleys) | ✔️ | ✔️ | ✔️ |
+| Pulleys | ✔️ | ✔️ | ❌ |
+| Breakable constraints | ✔️ | ❌ | ❌ |
+| Motion controllers | ✔️ | ✔️ | ✔️ |
+| Constraint motors | ✔️ | ✔️ | ✔️ |
+| Ragdolls | ✔️ | ✔️ | ✔️ |
+| Triggers | ✔️ | ✔️ | ❌ |
+| Object touch callbacks | ✔️ | ✔️ | ✔️ |
+| Prop damage / breaking | ✔️ | ✔️ | ✔️ |
+| Fluid events | ✔️ | ✔️ | ✔️ |
+| Prop splashing effects | ✔️ | ✔️ | ✔️ |
+| Wheeled vehicles | ✔️ | ✔️ | ❌ |
+| Raycast vehicles (airboat) | ✔️ | ❌ | ❌ |
+| Shadow controllers (NPCs, doors) | ✔️ | ✔️ | ✔️ |
+| Save / restore | ✔️ | ✔️ | ❌ |
+| Portal support | ✔️ | ✔️ | ❌ |
+| Per-object no-collide callbacks | ✔️ | ✔️ | ✔️ |
+| Crash-resistant solver | ❌ | ✔️ | ✔️ |
+| Thousands of objects without lag | ❌ | ✔️ | ✔️ |
+| Multithreaded | ❌ | ✔️ | ✔️ |
+| Player controller | ✔️ | ✔️ | ✔️ |
 
 ## Platforms
 
-> [!NOTE]
-> These are Windows builds.
-> Vox3D is failing to compile on Linux on the x64 MP SDK and x86 SP SDK, other branches have not been tested; macOS is unknown as of now.
+Build status per CMake preset. Future support for macOS is unknown.
 
-| Branches | Builds | Tested |
-|:--|:--:|:--:|
-| SDK 2013 SP/MP x86 | ✔️ |  |
-| SDK 2013 MP x64 | ✔️ |  |
-| Alien Swarm x86 | ✔️ |  |
-| Garry's Mod x86 | ✔️ |  |
-| Garry's Mod x64 | ✔️ | ✔️ |
+| Preset | Platform | Builds | Tested |
+|:--|:--|:--:|:--:|
+| `gmod-x64` | Windows | ✔️ | ✔️ |
+| `gmod-x86` | Windows | ✔️ |  |
+| `gmod-linux-x64` / `gmod-linux-x86` | Linux | ✔️ |  |
+| `sdk2013-mp` | Windows x86 | ✔️ |  |
+| `sdk2013-sp` | Windows x86 | ❌ |  |
+| `asw` | Windows x86 | ❌ |  |
 
 To build, see: [build.md](build.md)
 
@@ -64,4 +63,4 @@ To build, see: [build.md](build.md)
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Box3D and Source SDK code retain their respective licences.
+MIT, see [LICENSE](LICENSE). Box3D and Source SDK code retain their respective licenses.

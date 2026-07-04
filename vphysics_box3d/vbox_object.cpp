@@ -475,7 +475,8 @@ void Box3DPhysicsObject::CalculateForceOffset( const Vector &forceVector, const 
 	{
 		Vector com;
 		com = BoxToSource::Distance( b3Body_GetWorldCenterOfMass( m_BodyId ) );
-		*centerTorque = CrossProduct( worldPosition - com, forceVector );
+		const Vector worldTorque = CrossProduct( worldPosition - com, forceVector );
+		WorldToLocalVector( centerTorque, worldTorque );
 	}
 }
 

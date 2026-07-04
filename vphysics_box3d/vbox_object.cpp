@@ -549,6 +549,45 @@ void Box3DPhysicsObject::RemoveShadowController()
 
 // The engine's grab/shadow (physgun, +use pickup, doors) drives a held object toward a target through
 // this every step: compute a velocity toward the target position/rotation and set it on the body.
+// Remove the components of a shadow-driven velocity that point into static geometry. Box3D's solver
+// can't fully cancel a hard-set velocity aimed at a contact under sustained drive, so without this the
+// physgun/carry can force the held object through walls. Only static blockers are clamped, so pushing
+// or lifting dynamic objects still works.
+static void ClampShadowVelocityAgainstContacts( const Box3DPhysicsObject *pSelf, b3BodyId bodyId, Vector &velocity )
+{
+	if ( velocity == vec3_origin )
+		return;
+
+	b3ContactData contacts[ 16 ];
+	const int nCount = b3Body_GetContactData( bodyId, contacts, 16 );
+	for ( int i = 0; i < nCount; i++ )
+	{
+		Box3DPhysicsObject *pA = static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( contacts[ i ].shapeIdA ) ) );
+		const bool bSelfIsA = ( pA == pSelf );
+		Box3DPhysicsObject *pOther = bSelfIsA
+			? static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( contacts[ i ].shapeIdB ) ) )
+			: pA;
+		if ( !pOther || !pOther->IsStatic() )
+			continue;
+
+		for ( int j = 0; j < contacts[ i ].manifoldCount; j++ )
+		{
+			const b3Manifold &manifold = contacts[ i ].manifolds[ j ];
+			if ( manifold.pointCount <= 0 )
+				continue;
+
+			// Manifold normal points A -> B; orient it from the shadow object into the blocker.
+			Vector vNormal = BoxToSource::Unitless( manifold.normal );
+			if ( !bSelfIsA )
+				vNormal = -vNormal;
+
+			const float flInto = DotProduct( velocity, vNormal );
+			if ( flInto > 0.0f )
+				velocity -= vNormal * flInto;
+		}
+	}
+}
+
 float Box3DPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &params, float flSecondsToArrival, float flDeltaTime )
 {
 	Vector position;
@@ -600,6 +639,7 @@ float Box3DPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &
 
 	if ( !m_bStatic )
 	{
+		ClampShadowVelocityAgainstContacts( this, m_BodyId, linearVelocity );
 		b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( linearVelocity ) );
 		b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( angularVelocity ) );
 		b3Body_SetAwake( m_BodyId, true );

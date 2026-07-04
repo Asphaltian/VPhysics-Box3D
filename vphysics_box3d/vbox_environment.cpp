@@ -22,6 +22,9 @@
 #include "tier0/memdbgon.h"
 
 static ConVar vbox_substeps("vbox_substeps", "8", FCVAR_NONE, "Solver substeps per physics step.", true, 1.0f, true, 32.0f);
+static ConVar vbox_contact_hertz("vbox_contact_hertz", "30", FCVAR_NONE, "Contact stiffness in Hz. Lower is softer/smushier.", true, 1.0f, true, 480.0f);
+static ConVar vbox_contact_damping("vbox_contact_damping", "10", FCVAR_NONE, "Contact damping ratio. Higher settles overlap with less bounce.", true, 0.0f, true, 100.0f);
+static ConVar vbox_contact_speed("vbox_contact_speed", "100", FCVAR_NONE, "Overlap push-out speed cap in in/s.", true, 0.0f, true, 1000.0f);
 
 namespace
 {
@@ -375,6 +378,7 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
 
 	m_flSimulationClock += deltaTime;
 
+	b3World_SetContactTuning(m_WorldId, vbox_contact_hertz.GetFloat(), vbox_contact_damping.GetFloat(), SourceToBox::Distance(vbox_contact_speed.GetFloat()));
 	b3World_Step(m_WorldId, deltaTime, vbox_substeps.GetInt());
 
 	// Wake/sleep transitions -> ObjectWake/ObjectSleep (prop sleep networking and game logic).

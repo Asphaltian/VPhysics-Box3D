@@ -176,6 +176,10 @@ public:
     {
         return m_flMaxAngularVelocity;
     }
+    float GetLastStepTime() const
+    {
+        return m_flLastStepTime;
+    }
     IPhysicsCollisionEvent* GetCollisionEvent() const
     {
         return m_pCollisionEvent;
@@ -211,6 +215,7 @@ private:
     Vector m_vecGravity = vec3_origin;
     float m_flAirDensity = 2.0f;
     float m_flSimulationTimestep = 1.0f / 60.0f;
+    float m_flLastStepTime = 1.0f / 60.0f;
     float m_flSimulationClock = 0.0f;
     float m_flMaxAngularVelocity = 104.0f; // PI/2 rad at ~66.7Hz; recomputed each step for the real tick
     bool m_bInSimulation = false;

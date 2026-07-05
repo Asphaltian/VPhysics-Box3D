@@ -382,6 +382,8 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
     if (deltaTime <= 0.0f)
         return;
 
+    m_flLastStepTime = deltaTime;
+
     CleanupDeleteList();
 
     m_bInSimulation = true;

@@ -10,6 +10,7 @@
 #include "vbox_collide.h"
 #include "vbox_controller_shadow.h"
 #include "vbox_environment.h"
+#include "vbox_friction.h"
 #include "vbox_surfaceprops.h"
 #include "vphysics/friction.h"
 
@@ -23,60 +24,6 @@ static uint64 s_nNextUniqueId = 1;
 
 namespace
 {
-    // The game iterates `while ( snapshot->IsValid() )` without null-checking, so we return a valid
-    // empty snapshot rather than null.
-    class Box3DDummyFrictionSnapshot final : public IPhysicsFrictionSnapshot
-    {
-    public:
-        bool IsValid() override
-        {
-            return false;
-        }
-        IPhysicsObject* GetObject(int) override
-        {
-            return nullptr;
-        }
-        int GetMaterial(int) override
-        {
-            return 0;
-        }
-        void GetContactPoint(Vector& out) override
-        {
-            out = vec3_origin;
-        }
-        void GetSurfaceNormal(Vector& out) override
-        {
-            out = vec3_origin;
-        }
-        float GetNormalForce() override
-        {
-            return 0.0f;
-        }
-        float GetEnergyAbsorbed() override
-        {
-            return 0.0f;
-        }
-        void RecomputeFriction() override
-        {
-        }
-        void ClearFrictionForce() override
-        {
-        }
-        void MarkContactForDelete() override
-        {
-        }
-        void DeleteAllMarkedContacts(bool) override
-        {
-        }
-        void NextFrictionData() override
-        {
-        }
-        float GetFrictionCoefficient() override
-        {
-            return 0.0f;
-        }
-    };
-
     // Run a callable over every shape on a body.
     template<typename Fn> void ForEachShape(b3BodyId bodyId, Fn fn)
     {
@@ -855,11 +802,11 @@ void Box3DPhysicsObject::RemoveHinged()
 
 IPhysicsFrictionSnapshot* Box3DPhysicsObject::CreateFrictionSnapshot()
 {
-    return new Box3DDummyFrictionSnapshot;
+    return new Box3DFrictionSnapshot(this, m_pEnvironment->GetLastStepTime());
 }
 void Box3DPhysicsObject::DestroyFrictionSnapshot(IPhysicsFrictionSnapshot* pSnapshot)
 {
-    delete static_cast<Box3DDummyFrictionSnapshot*>(pSnapshot);
+    delete static_cast<Box3DFrictionSnapshot*>(pSnapshot);
 }
 
 void Box3DPhysicsObject::OutputDebugInfo() const

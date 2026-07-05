@@ -8,6 +8,7 @@ set(_sources
     vbox_controller_player.cpp
     vbox_controller_shadow.cpp
     vbox_environment.cpp
+    vbox_friction.cpp
     vbox_interface.cpp
     vbox_keyvalues_schema.cpp
     vbox_object.cpp
@@ -26,6 +27,7 @@ set(_headers
     vbox_controller_player.h
     vbox_controller_shadow.h
     vbox_environment.h
+    vbox_friction.h
     vbox_interface.h
     vbox_keyvalues_schema.h
     vbox_object.h

@@ -35,6 +35,10 @@ namespace
     // Minimum time between collision events for the same object pair (IVP's deltaCollisionTime gate).
     constexpr float kCollisionEventInterval = 0.2f;
 
+    // Contacts penetrating deeper than this (in/s worth of push-out can't clear it) count as stuck, and the
+    // game is asked to resolve them (ShouldSolvePenetration -> ragdoll self-solve / NPC push-out / disable).
+    constexpr float kPenetrationDepth = 2.0f;
+
     // Apply a Source surface's friction/bounce/density to a shape. Box3D combines both shapes on contact.
     void ApplyMaterialToShape(b3ShapeDef& shapeDef, int materialIndex)
     {
@@ -261,6 +265,8 @@ IPhysicsObject* Box3DPhysicsEnvironment::CreateObject(
         // Required for the ShouldCollide filter/pre-solve callbacks to fire.
         shapeDef.enableCustomFiltering = true;
         shapeDef.enablePreSolveEvents = true;
+        // So triggers (sensors) detect this object entering/leaving them.
+        shapeDef.enableSensorEvents = true;
         ApplyMaterialToShape(shapeDef, materialIndex);
         for (int i = 0; i < pCollisionModel->m_Convexes.Count(); i++)
         {
@@ -318,6 +324,7 @@ IPhysicsObject* Box3DPhysicsEnvironment::CreateSphereObject(
     shapeDef.enableHitEvents = true;
     shapeDef.enableCustomFiltering = true;
     shapeDef.enablePreSolveEvents = true;
+    shapeDef.enableSensorEvents = true;
     ApplyMaterialToShape(shapeDef, materialIndex);
     b3Sphere sphere = { { 0.0f, 0.0f, 0.0f }, SourceToBox::Distance(radius) };
     b3CreateSphereShape(bodyId, &shapeDef, &sphere);
@@ -353,9 +360,14 @@ void Box3DPhysicsEnvironment::DestroyObject(IPhysicsObject* pObject)
     }
     for (int i = 0; i < m_FluidControllers.Count(); i++)
         m_FluidControllers[i]->DetachObject(pBoxObject);
-    // Break constraints and springs on this object so their getters can't return a freed pointer.
+    // Break constraints/springs on this object so their getters can't return a freed pointer, and report
+    // ConstraintBroken like IVP (the game defers entity removal, so firing in-loop is safe).
     for (int i = 0; i < m_Constraints.Count(); i++)
-        m_Constraints[i]->NotifyObjectDestroyed(pBoxObject);
+    {
+        const bool bBroke = m_Constraints[i]->NotifyObjectDestroyed(pBoxObject);
+        if (bBroke && m_pConstraintEvent && m_bConstraintNotify)
+            m_pConstraintEvent->ConstraintBroken(m_Constraints[i]);
+    }
     for (int i = 0; i < m_Springs.Count(); i++)
         m_Springs[i]->NotifyObjectDestroyed(pBoxObject);
 
@@ -539,6 +551,17 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
     }
 
     DrainContactEvents();
+    DrainSensorEvents();
+    DrainJointEvents();
+    SolvePulleys(deltaTime);
+
+    // Throttled to ~10Hz: penetration recovery is time-based in the game, and scanning contacts every step
+    // would add cost to big piles for no benefit.
+    if (m_flSimulationClock >= m_flNextPenetrationScan)
+    {
+        m_flNextPenetrationScan = m_flSimulationClock + 0.1f;
+        SolvePenetrations(deltaTime);
+    }
 
     m_bInSimulation = false;
 
@@ -702,6 +725,95 @@ void Box3DPhysicsEnvironment::DrainContactEvents()
     }
 }
 
+// Sensor overlaps -> ObjectEnter/LeaveTrigger (sensorShape = trigger, visitorShape = the crossing object).
+void Box3DPhysicsEnvironment::DrainSensorEvents()
+{
+    if (!m_pCollisionEvent)
+        return;
+
+    const b3SensorEvents events = b3World_GetSensorEvents(m_WorldId);
+
+    for (int i = 0; i < events.beginCount; i++)
+    {
+        Box3DPhysicsObject* pTrigger = ObjectFromShape(events.beginEvents[i].sensorShapeId);
+        Box3DPhysicsObject* pObject = ObjectFromShape(events.beginEvents[i].visitorShapeId);
+        if (pTrigger && pObject)
+            m_pCollisionEvent->ObjectEnterTrigger(pTrigger, pObject);
+    }
+
+    for (int i = 0; i < events.endCount; i++)
+    {
+        Box3DPhysicsObject* pTrigger = ObjectFromShape(events.endEvents[i].sensorShapeId);
+        Box3DPhysicsObject* pObject = ObjectFromShape(events.endEvents[i].visitorShapeId);
+        if (pTrigger && pObject)
+            m_pCollisionEvent->ObjectLeaveTrigger(pTrigger, pObject);
+    }
+}
+
+// Box3D reports (but does not break) joints whose constraint force/torque passed the threshold this step. IVP
+// breaks such constraints and fires ConstraintBroken, so we do the same.
+void Box3DPhysicsEnvironment::DrainJointEvents()
+{
+    const b3JointEvents events = b3World_GetJointEvents(m_WorldId);
+    if (events.count <= 0)
+        return;
+
+    // Copy the constraints out first: breaking a joint below invalidates the event array. userData is the
+    // owning constraint (set in Activate); springs never set a threshold so they never appear here.
+    CUtlVector<Box3DPhysicsConstraint*> broken;
+    for (int i = 0; i < events.count; i++)
+        if (Box3DPhysicsConstraint* pC = static_cast<Box3DPhysicsConstraint*>(events.jointEvents[i].userData))
+            broken.AddToTail(pC);
+
+    for (int i = 0; i < broken.Count(); i++)
+    {
+        // Re-check membership: a prior ConstraintBroken may have had the game destroy this constraint.
+        if (m_Constraints.Find(broken[i]) == m_Constraints.InvalidIndex())
+            continue;
+        // The constraint physically breaks whether or not the game opted into notifications.
+        broken[i]->OnBroken();
+        if (m_pConstraintEvent && m_bConstraintNotify)
+            m_pConstraintEvent->ConstraintBroken(broken[i]);
+    }
+}
+
+// IVP reports deeply-penetrating pairs to IPhysicsCollisionSolver::ShouldSolvePenetration; the game escalates
+// that into ragdoll self-solve, the NPC push-out solver, or disabling the pair. The game dedups
+// (FindOrAddPenetrateEvent), so report each pair without deduping here.
+void Box3DPhysicsEnvironment::SolvePenetrations(float dt)
+{
+    if (!m_pCollisionSolver)
+        return;
+
+    const float flThreshold = SourceToBox::Distance(kPenetrationDepth);
+
+    b3ContactData contacts[16];
+    for (int i = 0; i < m_ActiveObjects.Count(); i++)
+    {
+        Box3DPhysicsObject* pA = m_ActiveObjects[i];
+        if (!pA->GetGameData())
+            continue;
+
+        const int nCount = b3Body_GetContactData(pA->GetBodyID(), contacts, ARRAYSIZE(contacts));
+        for (int c = 0; c < nCount; c++)
+        {
+            float flSep = 0.0f;
+            for (int m = 0; m < contacts[c].manifoldCount; m++)
+                for (int p = 0; p < contacts[c].manifolds[m].pointCount; p++)
+                    flSep = Min(flSep, contacts[c].manifolds[m].points[p].separation);
+            if (flSep > -flThreshold)
+                continue;
+
+            Box3DPhysicsObject* pShapeA = ObjectFromShape(contacts[c].shapeIdA);
+            Box3DPhysicsObject* pB = (pShapeA == pA) ? ObjectFromShape(contacts[c].shapeIdB) : pShapeA;
+            if (!pB || pB == pA || !pB->GetGameData())
+                continue;
+
+            m_pCollisionSolver->ShouldSolvePenetration(pA, pB, pA->GetGameData(), pB->GetGameData(), dt);
+        }
+    }
+}
+
 bool Box3DPhysicsEnvironment::IsInSimulation() const
 {
     return m_bInSimulation;
@@ -745,7 +857,7 @@ void Box3DPhysicsEnvironment::SetObjectEventHandler(IPhysicsObjectEvent* pObject
 
 void Box3DPhysicsEnvironment::SetConstraintEventHandler(IPhysicsConstraintEvent* pConstraintEvents)
 {
-    Log_Stub(LOG_VBox3D);
+    m_pConstraintEvent = pConstraintEvents;
 }
 
 void Box3DPhysicsEnvironment::SetQuickDelete(bool bQuick)
@@ -876,7 +988,7 @@ IPhysicsObject* Box3DPhysicsEnvironment::UnserializeObjectFromBuffer(
 
 void Box3DPhysicsEnvironment::EnableConstraintNotify(bool bEnable)
 {
-    Log_Stub(LOG_VBox3D);
+    m_bConstraintNotify = bEnable;
 }
 
 void Box3DPhysicsEnvironment::DebugCheckContacts()

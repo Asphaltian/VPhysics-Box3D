@@ -8,23 +8,8 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
-//-------------------------------------------------------------------------------------------------
-// Shadow controller. The object is driven kinematically toward the game's target, so dynamic
-// bodies can never push it off course (doors, lifts, NPC-driven objects).
-//-------------------------------------------------------------------------------------------------
-
-// A contact normal.z below this (pointing down out of the surface the body rests on) counts as ground.
-static constexpr float kGroundNormalZ = -0.7f;
-
-// The other object in a body's contact; also reports whether pSelf is side A (manifold normals point A -> B).
-static Box3DPhysicsObject* ContactOther(const b3ContactData& contact, Box3DPhysicsObject* pSelf, bool* pSelfIsA = nullptr)
-{
-    Box3DPhysicsObject* pA = static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(contact.shapeIdA)));
-    const bool bSelfIsA = pA == pSelf;
-    if (pSelfIsA)
-        *pSelfIsA = bSelfIsA;
-    return bSelfIsA ? static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(contact.shapeIdB))) : pA;
-}
+// Shadow controller: a velocity servo driving the object toward the game's target each step (IVP's shadow),
+// so it can be blocked by geometry and pushed by physics when allowed.
 
 Box3DPhysicsShadowController::Box3DPhysicsShadowController(
     Box3DPhysicsObject* pObject, bool allowTranslation, bool allowRotation)
@@ -32,10 +17,11 @@ Box3DPhysicsShadowController::Box3DPhysicsShadowController(
     , m_allowTranslation(allowTranslation)
     , m_allowRotation(allowRotation)
 {
-    const b3BodyId bodyId = m_pObject->GetBodyID();
-
-    m_savedBodyType = b3Body_GetType(bodyId);
-    b3Body_SetType(bodyId, b3_kinematicBody);
+    // Shadow objects are velocity-driven toward the game's target each step (IVP's servo), so they can be
+    // blocked by geometry and pushed by physics when allowed. Keep the body dynamic but drop gravity so it
+    // holds position when idle instead of falling.
+    m_savedGravity = m_pObject->IsGravityEnabled();
+    m_pObject->EnableGravity(false);
 
     m_savedMaterialIndex = m_pObject->GetMaterialIndex();
     UseShadowMaterial(true);
@@ -60,12 +46,10 @@ Box3DPhysicsShadowController::~Box3DPhysicsShadowController()
         m_pObject->SetCallbackFlags(m_savedCallbackFlags);
         m_pObject->EnableDrag(true);
         UseShadowMaterial(false);
+        m_pObject->EnableGravity(m_savedGravity);
 
         if (b3Body_IsValid(bodyId))
-        {
-            b3Body_SetType(bodyId, m_savedBodyType);
             b3Body_SetAwake(bodyId, true);
-        }
     }
 }
 
@@ -179,23 +163,16 @@ void Box3DPhysicsShadowController::OnPreSimulate(float flDeltaTime)
     if (!m_enabled)
         return;
 
-    const b3BodyId bodyId = m_pObject->GetBodyID();
+    // Velocity servo toward the target (blockable, physics-movable), same as IVP's shadow.
+    hlshadowcontrol_params_t params = {};
+    params.targetPosition = m_targetPosition;
+    params.targetRotation = m_targetAngles;
+    params.maxSpeed = m_maxSpeed;
+    params.maxAngular = m_maxAngular;
+    params.maxDampSpeed = m_maxDampSpeed;
+    params.maxDampAngular = m_maxDampAngular;
+    params.dampFactor = 1.0f;
+    params.teleportDistance = m_teleportDistance;
 
-    if (m_secondsToArrival > 0.0f)
-    {
-        b3WorldTransform target;
-        target.p = SourceToBox::Distance(m_targetPosition);
-        target.q = SourceToBox::Angle(m_targetAngles);
-        b3Body_SetTargetTransform(bodyId, target, m_secondsToArrival, true);
-    }
-    else
-    {
-        b3Body_SetTransform(bodyId, SourceToBox::Distance(m_targetPosition), SourceToBox::Angle(m_targetAngles));
-        b3Body_SetLinearVelocity(bodyId, b3Vec3{});
-        b3Body_SetAngularVelocity(bodyId, b3Vec3{});
-        b3Body_SetAwake(bodyId, true);
-        m_enabled = false;
-    }
-
-    m_secondsToArrival = Max(m_secondsToArrival - flDeltaTime, 0.0f);
+    m_secondsToArrival = m_pObject->ComputeShadowControl(params, m_secondsToArrival, flDeltaTime);
 }

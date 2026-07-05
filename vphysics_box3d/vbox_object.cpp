@@ -864,16 +864,71 @@ const char* Box3DPhysicsObject::GetName() const
     return m_pName;
 }
 
-// A trigger (e.g. water) is non-solid: drop collision response so bodies pass through and queries find them.
+// Swap this body's shapes between sensor (trigger: non-solid, overlap-reporting) and normal solid shapes.
+void Box3DPhysicsObject::RebuildShapes(bool asSensor)
+{
+    b3ShapeId shapes[32];
+    const int nOld = b3Body_GetShapes(m_BodyId, shapes, ARRAYSIZE(shapes));
+    for (int i = 0; i < nOld; i++)
+        b3DestroyShape(shapes[i], false);
+
+    b3ShapeDef shapeDef = b3DefaultShapeDef();
+    shapeDef.enableSensorEvents = true;
+    shapeDef.updateBodyMass = false; // keep the body's mass across the swap; RemoveTrigger restores it
+    if (asSensor)
+    {
+        shapeDef.isSensor = true;
+    }
+    else
+    {
+        shapeDef.enableContactEvents = true;
+        shapeDef.enableHitEvents = true;
+        shapeDef.enableCustomFiltering = true;
+        shapeDef.enablePreSolveEvents = true;
+        if (surfacedata_t* pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(m_materialIndex))
+        {
+            shapeDef.baseMaterial.friction = Max(pSurface->physics.friction, 0.0f);
+            shapeDef.baseMaterial.restitution = pSurface->physics.elasticity;
+            if (pSurface->physics.density > 0.0f)
+                shapeDef.density = pSurface->physics.density;
+        }
+    }
+
+    if (m_pCollide)
+    {
+        for (int i = 0; i < m_pCollide->m_Convexes.Count(); i++)
+        {
+            CPhysConvex* pConvex = m_pCollide->m_Convexes[i];
+            if (!pConvex->m_pHull)
+                continue;
+            b3CreateHullShape(m_BodyId, &shapeDef, m_bStatic ? pConvex->m_pHull : pConvex->GetSimHull());
+        }
+        if (m_pCollide->m_pMesh)
+            b3CreateMeshShape(m_BodyId, &shapeDef, m_pCollide->m_pMesh, b3Vec3{ 1.0f, 1.0f, 1.0f });
+    }
+    else if (m_flSphereRadius > 0.0f)
+    {
+        b3Sphere sphere = { { 0.0f, 0.0f, 0.0f }, SourceToBox::Distance(m_flSphereRadius) };
+        b3CreateSphereShape(m_BodyId, &shapeDef, &sphere);
+    }
+}
+
+// A trigger is a sensor: non-solid, reports enter/leave overlaps (drained as ObjectEnter/LeaveTrigger).
 void Box3DPhysicsObject::BecomeTrigger()
 {
+    if (m_bTrigger)
+        return;
     m_bTrigger = true;
-    EnableCollisions(false);
+    RebuildShapes(true);
 }
 void Box3DPhysicsObject::RemoveTrigger()
 {
+    if (!m_bTrigger)
+        return;
     m_bTrigger = false;
-    EnableCollisions(true);
+    RebuildShapes(false);
+    if (!m_bStatic)
+        SetMass(m_flCachedMass);
 }
 void Box3DPhysicsObject::BecomeHinged(int)
 {

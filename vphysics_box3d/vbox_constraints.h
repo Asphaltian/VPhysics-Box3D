@@ -56,11 +56,30 @@ public:
         return m_JointId;
     }
 
-    // A constrained object is being destroyed: break the joint and null the stale pointer.
-    void NotifyObjectDestroyed(Box3DPhysicsObject* pObject);
+    // A constrained object is being destroyed: break the joint and null the stale pointer. Returns true the
+    // first time (so the environment fires ConstraintBroken once).
+    bool NotifyObjectDestroyed(Box3DPhysicsObject* pObject);
+
+    // The joint exceeded its force/torque limit: destroy it and mark the constraint broken (it stays broken).
+    void OnBroken();
+    void SetBreakParams(const constraint_breakableparams_t& params)
+    {
+        m_BreakParams = params;
+    }
+
+    // Pulley: Box3D has no pulley joint, so it is solved as a per-step impulse constraint coupling the two
+    // rope segments (|A-pulleyA| + gearRatio*|B-pulleyB| = totalLength). SolvePulley runs each step.
+    void SetupPulley(const b3Vec3 pulleyWorld[2], const b3Vec3 localAttach[2], float totalLength, float gearRatio, bool rigid);
+    void SolvePulley(float dt);
+    bool IsPulley() const
+    {
+        return m_bPulley;
+    }
 
 private:
     void DestroyJoint();
+    // Apply the breakable params to the live joint: force/torque break thresholds and constraint strength.
+    void ApplyConstraintTuning();
 
     Box3DPhysicsEnvironment* m_pEnvironment;
     Box3DPhysicsObject* m_pReference;
@@ -69,6 +88,15 @@ private:
     void* m_pGameData = nullptr;
     b3JointId m_JointId = b3_nullJointId;
     std::function<b3JointId()> m_BuildFn;
+    constraint_breakableparams_t m_BreakParams = {};
+    bool m_bBroken = false;
+
+    bool m_bPulley = false;
+    b3Vec3 m_PulleyWorld[2] = {}; // pulley pivots, world space (metres)
+    b3Vec3 m_PulleyLocal[2] = {}; // attach points, body-origin-local (metres)
+    float m_flPulleyTotalLength = 0.0f;
+    float m_flPulleyGearRatio = 1.0f;
+    bool m_bPulleyRigid = false;
 };
 
 // A Source spring on a Box3D distance joint with a soft spring.

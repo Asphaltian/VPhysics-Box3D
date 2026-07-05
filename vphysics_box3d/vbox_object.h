@@ -248,6 +248,9 @@ private:
     // Recompute m_flBuoyancyRatio from mass/volume and material density.
     void CalculateBuoyancy();
 
+    // Recreate this body's shapes as sensors (trigger) or normal solid shapes.
+    void RebuildShapes(bool asSensor);
+
     // Josh:
     // Always put m_pGameData first. Some games that will remain un-named offset by the
     // vtable to get to this instead of calling GetGameData().

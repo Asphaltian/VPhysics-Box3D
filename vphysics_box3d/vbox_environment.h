@@ -202,12 +202,19 @@ public:
 private:
     // Drain Box3D's post-step contact events into the game's collision callbacks.
     void DrainContactEvents();
+    void DrainSensorEvents();
+    // Report joints that broke their force/torque limit this step to the game as ConstraintBroken.
+    void DrainJointEvents();
+    void SolvePenetrations(float dt);
+    // Box3D has no pulley joint, so pulley constraints are solved here each step.
+    void SolvePulleys(float dt);
 
     void DeleteObject(Box3DPhysicsObject* pObject);
 
-    // Track a new constraint, wire it to its group, and build its joint (unless deferred to the group).
+    // Track a new constraint, wire it to its group, store its break params, and build its joint (unless
+    // deferred to the group).
     IPhysicsConstraint* FinishConstraint(
-        Box3DPhysicsConstraint* pConstraint, IPhysicsConstraintGroup* pGroup, bool bActive,
+        Box3DPhysicsConstraint* pConstraint, IPhysicsConstraintGroup* pGroup, const constraint_breakableparams_t& breakParams,
         const std::function<b3JointId()>& buildFn);
 
     b3WorldId m_WorldId;
@@ -217,12 +224,15 @@ private:
     float m_flSimulationTimestep = 1.0f / 60.0f;
     float m_flLastStepTime = 1.0f / 60.0f;
     float m_flSimulationClock = 0.0f;
+    float m_flNextPenetrationScan = 0.0f;
     float m_flMaxAngularVelocity = 104.0f; // PI/2 rad at ~66.7Hz; recomputed each step for the real tick
     bool m_bInSimulation = false;
 
     IPhysicsCollisionEvent* m_pCollisionEvent = nullptr;
     IPhysicsObjectEvent* m_pObjectEvent = nullptr;
     IPhysicsCollisionSolver* m_pCollisionSolver = nullptr;
+    IPhysicsConstraintEvent* m_pConstraintEvent = nullptr;
+    bool m_bConstraintNotify = false; // the game must opt in via EnableConstraintNotify before breaks are reported
 #if GAME_GMOD
     IGModPhysicsObjectEvent* m_pGModObjectEvent = nullptr;
 #endif
@@ -238,6 +248,7 @@ private:
     CUtlVector<Box3DPhysicsPlayerController*> m_PlayerControllers;
     CUtlVector<Box3DPhysicsFluidController*> m_FluidControllers;
     CUtlVector<Box3DPhysicsConstraint*> m_Constraints;
+    CUtlVector<Box3DPhysicsConstraint*> m_Pulleys; // subset of m_Constraints solved per-step (no native joint)
     CUtlVector<Box3DPhysicsSpring*> m_Springs;
     physics_performanceparams_t m_PerformanceParams;
 };

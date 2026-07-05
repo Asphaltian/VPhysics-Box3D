@@ -86,11 +86,117 @@ void Box3DPhysicsConstraint::DestroyJoint()
 
 void Box3DPhysicsConstraint::Activate()
 {
+    if (m_bBroken)
+        return;
     if (!b3Joint_IsValid(m_JointId) && m_BuildFn)
     {
         m_JointId = m_BuildFn();
         if (b3Joint_IsValid(m_JointId))
+        {
             b3Joint_SetUserData(m_JointId, this);
+            ApplyConstraintTuning();
+        }
+    }
+}
+
+void Box3DPhysicsConstraint::ApplyConstraintTuning()
+{
+    // Break limits arrive in kilogram-force (game does lbs2kg); break force = rated mass * sim gravity, so a
+    // weld rated for N kg holds an N-kg prop. 0 = never break, which Box3D's default FLT_MAX already means.
+    Vector vecGravity;
+    m_pEnvironment->GetGravity(&vecGravity);
+    float flGravity = SourceToBox::Distance(vecGravity.Length());
+    if (flGravity < 1e-3f)
+        flGravity = 9.80665f; // standard g if the game hasn't set gravity yet
+
+    if (m_BreakParams.forceLimit > 0.0f)
+        b3Joint_SetForceThreshold(m_JointId, m_BreakParams.forceLimit * flGravity);
+    if (m_BreakParams.torqueLimit > 0.0f)
+        b3Joint_SetTorqueThreshold(m_JointId, m_BreakParams.torqueLimit * flGravity * InchesToMetres);
+
+    // strength (0..1) softens the constraint below full stiffness; 1 keeps Box3D's default tuning.
+    if (m_BreakParams.strength > 0.0f && m_BreakParams.strength < 0.999f)
+    {
+        float flHertz, flDamping;
+        b3Joint_GetConstraintTuning(m_JointId, &flHertz, &flDamping);
+        b3Joint_SetConstraintTuning(m_JointId, flHertz * m_BreakParams.strength, flDamping);
+    }
+}
+
+void Box3DPhysicsConstraint::OnBroken()
+{
+    DestroyJoint();
+    m_bBroken = true;
+}
+
+void Box3DPhysicsConstraint::SetupPulley(
+    const b3Vec3 pulleyWorld[2], const b3Vec3 localAttach[2], float totalLength, float gearRatio, bool rigid)
+{
+    m_bPulley = true;
+    m_PulleyWorld[0] = pulleyWorld[0];
+    m_PulleyWorld[1] = pulleyWorld[1];
+    m_PulleyLocal[0] = localAttach[0];
+    m_PulleyLocal[1] = localAttach[1];
+    m_flPulleyTotalLength = totalLength;
+    m_flPulleyGearRatio = gearRatio > 1e-4f ? gearRatio : 1.0f;
+    m_bPulleyRigid = rigid;
+}
+
+// No pulley joint in Box3D: solve lenA + gear*lenB = totalLength (rope may slack) as a post-step impulse
+// constraint with the full effective mass, a few iterations, and a Baumgarte position bias.
+void Box3DPhysicsConstraint::SolvePulley(float dt)
+{
+    if (!m_bPulley || !m_pReference || !m_pAttached || dt <= 0.0f)
+        return;
+
+    const b3BodyId ref = m_pReference->GetBodyID();
+    const b3BodyId att = m_pAttached->GetBodyID();
+    if (!b3Body_IsAwake(ref) && !b3Body_IsAwake(att))
+        return; // both settled; don't keep them awake
+
+    const b3WorldTransform xfRef = b3Body_GetTransform(ref);
+    const b3WorldTransform xfAtt = b3Body_GetTransform(att);
+    const b3Pos worldA = b3TransformWorldPoint(xfRef, m_PulleyLocal[0]);
+    const b3Pos worldB = b3TransformWorldPoint(xfAtt, m_PulleyLocal[1]);
+
+    const b3Vec3 dA = b3Sub(b3ToVec3(worldA), m_PulleyWorld[0]);
+    const b3Vec3 dB = b3Sub(b3ToVec3(worldB), m_PulleyWorld[1]);
+    const float lenA = b3Length(dA), lenB = b3Length(dB);
+    if (lenA < 1e-6f || lenB < 1e-6f)
+        return;
+    const b3Vec3 uA = b3MulSV(1.0f / lenA, dA);
+    const b3Vec3 uB = b3MulSV(1.0f / lenB, dB);
+
+    const float gear = m_flPulleyGearRatio;
+    const float C = lenA + gear * lenB - m_flPulleyTotalLength;
+    if (!m_bPulleyRigid && C < 0.0f)
+        return; // rope slack
+
+    const b3Pos comA = b3TransformWorldPoint(xfRef, b3Body_GetMassData(ref).center);
+    const b3Pos comB = b3TransformWorldPoint(xfAtt, b3Body_GetMassData(att).center);
+    const b3Vec3 crossA = b3Cross(b3SubPos(worldA, comA), uA);
+    const b3Vec3 crossB = b3Cross(b3SubPos(worldB, comB), uB);
+    const b3Matrix3 invIA = b3Body_GetWorldInverseRotationalInertia(ref);
+    const b3Matrix3 invIB = b3Body_GetWorldInverseRotationalInertia(att);
+    const float kA = b3Body_GetInverseMass(ref) + b3Dot(crossA, b3MulMV(invIA, crossA));
+    const float kB = b3Body_GetInverseMass(att) + b3Dot(crossB, b3MulMV(invIB, crossB));
+    const float K = kA + gear * gear * kB;
+    if (K <= 1e-9f)
+        return; // both effectively immovable
+
+    const float flClampC = SourceToBox::Distance(24.0f);
+    const float bias = (0.2f / dt) * clamp(C, -flClampC, flClampC);
+
+    for (int i = 0; i < 4; i++)
+    {
+        const b3Vec3 vA = b3Body_GetWorldPointVelocity(ref, worldA);
+        const b3Vec3 vB = b3Body_GetWorldPointVelocity(att, worldB);
+        const float Cdot = b3Dot(uA, vA) + gear * b3Dot(uB, vB);
+        float impulse = -(Cdot + bias) / K;
+        if (!m_bPulleyRigid && impulse > 0.0f)
+            impulse = 0.0f; // a rope only pulls
+        b3Body_ApplyLinearImpulse(ref, b3MulSV(impulse, uA), worldA, true);
+        b3Body_ApplyLinearImpulse(att, b3MulSV(gear * impulse, uB), worldB, true);
     }
 }
 
@@ -108,15 +214,18 @@ IPhysicsObject* Box3DPhysicsConstraint::GetAttachedObject() const
     return m_pAttached;
 }
 
-void Box3DPhysicsConstraint::NotifyObjectDestroyed(Box3DPhysicsObject* pObject)
+bool Box3DPhysicsConstraint::NotifyObjectDestroyed(Box3DPhysicsObject* pObject)
 {
     if (m_pReference != pObject && m_pAttached != pObject)
-        return;
+        return false;
+    const bool bFireBroken = !m_bBroken; // report the break once, on the first constrained object to die
     DestroyJoint();
+    m_bBroken = true;
     if (m_pReference == pObject)
         m_pReference = nullptr;
     if (m_pAttached == pObject)
         m_pAttached = nullptr;
+    return bFireBroken;
 }
 
 void Box3DPhysicsConstraint::SetLinearMotor(float speed, float maxLinearImpulse)
@@ -166,8 +275,8 @@ bool Box3DPhysicsConstraint::GetConstraintTransform(
 bool Box3DPhysicsConstraint::GetConstraintParams(constraint_breakableparams_t* pParams) const
 {
     if (pParams)
-        memset(pParams, 0, sizeof(*pParams));
-    return false;
+        *pParams = m_BreakParams;
+    return true;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -185,9 +294,10 @@ void Box3DPhysicsConstraintGroup::Activate()
 //-------------------------------------------------------------------------------------------------
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::FinishConstraint(
-    Box3DPhysicsConstraint* pConstraint, IPhysicsConstraintGroup* pGroup, bool bActive,
+    Box3DPhysicsConstraint* pConstraint, IPhysicsConstraintGroup* pGroup, const constraint_breakableparams_t& breakParams,
     const std::function<b3JointId()>& buildFn)
 {
+    pConstraint->SetBreakParams(breakParams);
     m_Constraints.AddToTail(pConstraint);
     if (Box3DPhysicsConstraintGroup* pGrp = static_cast<Box3DPhysicsConstraintGroup*>(pGroup))
     {
@@ -195,7 +305,7 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::FinishConstraint(
         pConstraint->SetGroup(pGrp);
     }
     // Grouped constraints stay dormant until the group's Activate().
-    pConstraint->Init(buildFn, !pGroup && bActive);
+    pConstraint->Init(buildFn, !pGroup && breakParams.isActive);
     return pConstraint;
 }
 
@@ -208,12 +318,9 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateFixedConstraint(
     const b3WorldId world = m_WorldId;
     const b3BodyId ref = pRef->GetBodyID(), att = pAtt->GetBodyID();
 
-    // Lock the current relative pose (shared world frame = reference body).
-    const b3WorldTransform wtRef = b3Body_GetTransform(ref);
-    const b3WorldTransform wtAtt = b3Body_GetTransform(att);
-    b3Transform frameB;
-    frameB.p = b3InvRotateVector(wtAtt.q, b3Sub(b3ToVec3(wtRef.p), b3ToVec3(wtAtt.p)));
-    frameB.q = b3InvMulQuat(wtAtt.q, wtRef.q);
+    // Weld at the game's designed attached->ref pose (attachedRefXform), not the live pose. frameA is the
+    // reference origin; frameB is its inverse.
+    const b3Transform frameB = b3InvertTransform(SourceToBox::Transform(fixed.attachedRefXform));
 
     auto build = [=]() {
         b3WeldJointDef def = b3DefaultWeldJointDef();
@@ -223,7 +330,7 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateFixedConstraint(
         def.base.localFrameB = frameB;
         return b3CreateWeldJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, fixed.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, fixed.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreateHingeConstraint(
@@ -247,6 +354,12 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateHingeConstraint(
     const float flLower = ClampAngle(DEG2RAD(-hinge.hingeAxis.maxRotation), 0.99f * M_PI_F);
     const float flUpper = ClampAngle(DEG2RAD(-hinge.hingeAxis.minRotation), 0.99f * M_PI_F);
 
+    // hingeAxis.torque is friction (velocity 0) or a motor; it's HL units (kg*in^2/s^2), so scale to N-m by
+    // (in/m)^2 or the hinge barely swings. Negate the speed to match the limits' clockwise flip.
+    const bool bMotor = hinge.hingeAxis.angularVelocity != 0.0f || hinge.hingeAxis.torque != 0.0f;
+    const float flMotorSpeed = DEG2RAD(-hinge.hingeAxis.angularVelocity);
+    const float flMaxTorque = fabsf(hinge.hingeAxis.torque) * (InchesToMetres * InchesToMetres);
+
     auto build = [=]() {
         b3RevoluteJointDef def = b3DefaultRevoluteJointDef();
         def.base.bodyIdA = ref;
@@ -259,9 +372,15 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateHingeConstraint(
             def.lowerAngle = flLower;
             def.upperAngle = flUpper;
         }
+        if (bMotor)
+        {
+            def.enableMotor = true;
+            def.motorSpeed = flMotorSpeed;
+            def.maxMotorTorque = flMaxTorque;
+        }
         return b3CreateRevoluteJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, hinge.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, hinge.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreateBallsocketConstraint(
@@ -285,7 +404,7 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateBallsocketConstraint(
         def.base.localFrameB.p = posB;
         return b3CreateSphericalJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, ballsocket.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, ballsocket.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreateSlidingConstraint(
@@ -297,14 +416,14 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateSlidingConstraint(
     const b3WorldId world = m_WorldId;
     const b3BodyId ref = pRef->GetBodyID(), att = pAtt->GetBodyID();
 
-    // Prismatic axis is frame X; slideAxisRef is in reference space.
-    const b3Vec3 worldAxis = b3RotateVector(BodyRotation(ref), SourceToBox::Unitless(sliding.slideAxisRef));
-    const b3Vec3 anchor = BodyOrigin(att);
-    b3Transform frameA, frameB;
-    frameA.p = WorldToLocalPoint(ref, anchor);
-    frameA.q = LocalFrameForAxis(ref, b3Vec3_axisX, worldAxis);
-    frameB.p = WorldToLocalPoint(att, anchor);
-    frameB.q = LocalFrameForAxis(att, b3Vec3_axisX, worldAxis);
+    // Build from the designed attachedRefXform (not the live pose); slideAxisRef is reference-local, and the
+    // prismatic frees only frame X.
+    const b3Transform xAttToRef = SourceToBox::Transform(sliding.attachedRefXform);
+    const b3Vec3 slideAxis = SafeNormalize(SourceToBox::Unitless(sliding.slideAxisRef));
+    b3Transform frameA;
+    frameA.p = xAttToRef.p; // attached origin expressed in reference space = the slide anchor
+    frameA.q = b3ComputeQuatBetweenUnitVectors(b3Vec3_axisX, slideAxis);
+    const b3Transform frameB = b3InvMulTransforms(xAttToRef, frameA);
 
     const bool bLimit = sliding.limitMin != sliding.limitMax;
     const float flLo = SourceToBox::Distance(sliding.limitMin);
@@ -333,7 +452,7 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateSlidingConstraint(
         }
         return b3CreatePrismaticJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, sliding.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, sliding.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreateLengthConstraint(
@@ -374,7 +493,7 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateLengthConstraint(
         }
         return b3CreateDistanceJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, length.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, length.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreateRagdollConstraint(
@@ -414,7 +533,10 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateRagdollConstraint(
 
     const float flLimit = 0.99f * M_PI_F;
     const float flCone = clamp(Max(0.5f * (flMax[1] - flMin[1]), 0.5f * (flMax[2] - flMin[2])), 0.0f, M_PI_F);
-    const float flFriction = Max(0.05f, (ragdoll.axes[0].torque + ragdoll.axes[1].torque + ragdoll.axes[2].torque) / 3.0f);
+    // One isotropic motor torque, so use the strongest axis (the average dilutes a 1-DOF joint); axis torque
+    // is HL units (kg*in^2/s^2) -> N-m by (in/m)^2.
+    const float flRawTorque = Max(ragdoll.axes[0].torque, Max(ragdoll.axes[1].torque, ragdoll.axes[2].torque));
+    const float flFriction = Max(0.05f, flRawTorque * (InchesToMetres * InchesToMetres));
 
     auto build = [=]() -> b3JointId {
         if (nDOF == 0)
@@ -465,18 +587,28 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateRagdollConstraint(
         def.maxMotorTorque = flFriction;
         return b3CreateSphericalJoint(world, &def);
     };
-    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, ragdoll.constraint.isActive, build);
+    return FinishConstraint(new Box3DPhysicsConstraint(this, pRef, pAtt), pGroup, ragdoll.constraint, build);
 }
 
 IPhysicsConstraint* Box3DPhysicsEnvironment::CreatePulleyConstraint(
     IPhysicsObject* pReferenceObject, IPhysicsObject* pAttachedObject, IPhysicsConstraintGroup* pGroup,
     const constraint_pulleyparams_t& pulley)
 {
-    // Box3D has no pulley joint; return an inert constraint.
-    return FinishConstraint(
-        new Box3DPhysicsConstraint(
-            this, static_cast<Box3DPhysicsObject*>(pReferenceObject), static_cast<Box3DPhysicsObject*>(pAttachedObject)),
-        pGroup, false, std::function<b3JointId()>());
+    Box3DPhysicsObject* pRef = static_cast<Box3DPhysicsObject*>(pReferenceObject);
+    Box3DPhysicsObject* pAtt = static_cast<Box3DPhysicsObject*>(pAttachedObject);
+    Box3DPhysicsConstraint* pConstraint = new Box3DPhysicsConstraint(this, pRef, pAtt);
+
+    // pulleyPosition is world space; objectPosition is object-local. Box3D has no pulley joint, so this is
+    // solved each step (SolvePulleys) instead of via a b3Joint builder.
+    const b3Vec3 pulleyWorld[2] = { SourceToBox::Distance(pulley.pulleyPosition[0]),
+                                    SourceToBox::Distance(pulley.pulleyPosition[1]) };
+    const b3Vec3 localAttach[2] = { SourceToBox::Distance(pulley.objectPosition[0]),
+                                    SourceToBox::Distance(pulley.objectPosition[1]) };
+    pConstraint->SetupPulley(
+        pulleyWorld, localAttach, SourceToBox::Distance(pulley.totalLength), pulley.gearRatio, pulley.isRigid);
+    m_Pulleys.AddToTail(pConstraint);
+
+    return FinishConstraint(pConstraint, pGroup, pulley.constraint, std::function<b3JointId()>());
 }
 
 void Box3DPhysicsEnvironment::DestroyConstraint(IPhysicsConstraint* pConstraint)
@@ -485,7 +617,14 @@ void Box3DPhysicsEnvironment::DestroyConstraint(IPhysicsConstraint* pConstraint)
         return;
     Box3DPhysicsConstraint* pBoxConstraint = static_cast<Box3DPhysicsConstraint*>(pConstraint);
     m_Constraints.FindAndRemove(pBoxConstraint);
+    m_Pulleys.FindAndRemove(pBoxConstraint);
     delete pBoxConstraint;
+}
+
+void Box3DPhysicsEnvironment::SolvePulleys(float dt)
+{
+    for (int i = 0; i < m_Pulleys.Count(); i++)
+        m_Pulleys[i]->SolvePulley(dt);
 }
 
 IPhysicsConstraintGroup* Box3DPhysicsEnvironment::CreateConstraintGroup(const constraint_groupparams_t& groupParams)

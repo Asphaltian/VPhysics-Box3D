@@ -46,7 +46,7 @@ private:
     float m_maxDampAngular = 0.0f;
     float m_teleportDistance = 0.0f;
 
-    b3BodyType m_savedBodyType = b3_staticBody;
+    bool m_savedGravity = true;
     int m_savedMaterialIndex = 0;
     unsigned short m_savedCallbackFlags = 0;
     bool m_allowTranslation = true;

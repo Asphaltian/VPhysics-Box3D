@@ -9,12 +9,12 @@ Work in progress!
 | Feature | VPhysics | Volt | Vox3D |
 |:--|:--:|:--:|:--:|
 | Constraints (except pulleys) | ✔️ | ✔️ | ✔️ |
-| Pulleys | ✔️ | ✔️ | ❌ |
-| Breakable constraints | ✔️ | ❌ | ❌ |
+| Pulleys | ✔️ | ✔️ | ✔️ |
+| Breakable constraints | ✔️ | ❌ | ✔️ |
 | Motion controllers | ✔️ | ✔️ | ✔️ |
 | Constraint motors | ✔️ | ✔️ | ✔️ |
 | Ragdolls | ✔️ | ✔️ | ✔️ |
-| Triggers | ✔️ | ✔️ | ❌ |
+| Triggers | ✔️ | ✔️ | ✔️ |
 | Object touch callbacks | ✔️ | ✔️ | ✔️ |
 | Prop damage / breaking | ✔️ | ✔️ | ✔️ |
 | Fluid events | ✔️ | ✔️ | ✔️ |

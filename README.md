@@ -34,14 +34,15 @@ Work in progress!
 
 Build status per CMake preset. Future support for macOS is unknown.
 
-| Preset | Platform | Builds | Tested |
-|:--|:--|:--:|:--:|
-| `gmod-x64` | Windows | ✔️ | ✔️ |
-| `gmod-x86` | Windows | ✔️ |  |
-| `gmod-linux-x64` / `gmod-linux-x86` | Linux | ✔️ |  |
-| `sdk2013-mp` | Windows x86 | ✔️ |  |
-| `sdk2013-sp` | Windows x86 | ❌ |  |
-| `asw` | Windows x86 | ❌ |  |
+| Preset | Builds | Tested |
+|:--|:--:|:--:|
+| `gmod-x64` | ✔️ | ✔️ |
+| `gmod-x86` | ✔️ |  |
+| `gmod-linux-x86` | ✔️ |  |
+| `gmod-linux-x64` | ✔️ |  |
+| `sdk2013-mp` | ✔️ |  |
+| `sdk2013-sp` | ❌ |  |
+| `asw` | ❌ |  |
 
 To build, see: [build.md](build.md)
 

@@ -217,6 +217,10 @@ public:
     Vector FakeVelocity(const Vector& vecVelocity);
     void RestoreVelocity(const Vector& vecVelocity);
 
+    // IVP air drag (CDragController): quadratic velocity/angular damping applied to awake bodies each step.
+    void RecomputeDragBases();
+    void ApplyAirDrag(float flAirDensity, float dt);
+
 private:
     // Recompute m_flBuoyancyRatio from mass/volume and material density.
     void CalculateBuoyancy();
@@ -253,6 +257,10 @@ private:
 
     float m_flLinearDamping = 0.0f;
     float m_flAngularDamping = 0.0f;
+    float m_flDragCoefficient = 0.0f;
+    float m_flAngularDragCoefficient = 0.0f;
+    Vector m_dragBasis = vec3_origin;
+    Vector m_angDragBasis = vec3_origin;
 
     // Box3D reports zero mass for static bodies, so cache what the game set.
     float m_flCachedMass = 0.0f;

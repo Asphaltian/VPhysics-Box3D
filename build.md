@@ -22,6 +22,9 @@ git submodule update --init --recursive
 
 ## Build
 
+> [!NOTE] 
+> Only Garry's Mod x64 is well tested. Linux is experimental and some variants don't build yet.
+
 Choose the preset for your game and architecture, configure, then build:
 
 ```bash
@@ -30,18 +33,16 @@ cmake --build --preset gmod-x64-Release
 ```
 
 | Preset | Game | Arch |
-|:---|:---|:---|
-| `gmod-x64` | Garry's Mod | x64 |
+|:---|:---|:---:|
 | `gmod-x86` | Garry's Mod | x86 |
+| `gmod-x64` | Garry's Mod | x64 |
+| `gmod-linux-x86` | Garry's Mod (Linux) | x86 |
+| `gmod-linux-x64` | Garry's Mod (Linux) | x64 |
 | `sdk2013-mp` | Source SDK 2013 Multiplayer | x86 |
 | `sdk2013-sp` | Source SDK 2013 Singleplayer | x86 |
 | `asw` | Alien Swarm | x86 |
-| `gmod-linux-x64` | Garry's Mod (Linux) | x64 |
-| `gmod-linux-x86` | Garry's Mod (Linux) | x86 |
 
 Every preset has a `-Debug` and `-Release` build (e.g. `gmod-x64-Release`, `sdk2013-mp-Debug`). The result is `build/<preset>/bin/<config>/vphysics.dll` (`vphysics.so` on Linux).
-
-Only Garry's Mod x64 is well tested. Linux is experimental and some variants don't build yet.
 
 If you have a Visual Studio other than 2022, skip the preset and name your generator:
 

@@ -230,7 +230,7 @@ void Box3DPhysicsFluidController::OnPreSimulate(float flDeltaTime)
         // Centre of buoyancy: midpoint of the submerged span, relative to the centre of mass.
         const float flMidSub = 0.5f * (flLo + flTop);
         const b3Vec3 cob = b3Add(c, b3MulSV(flMidSub - flCN, n));
-        const b3Vec3 relCob = b3Sub(cob, b3Body_GetWorldCenterOfMass(body));
+        const b3Vec3 relCob = b3Sub(cob, b3Body_GetWorldCenter(body));
 
         const float flFluidDensity = flWaterDensity * pObject->BuoyancyRatio();
 

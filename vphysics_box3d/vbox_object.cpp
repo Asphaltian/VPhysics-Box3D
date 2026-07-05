@@ -22,6 +22,11 @@
 // Monotonic id stamped on every object at creation for dangling-proof identity comparison (never reused).
 static uint64 s_nNextUniqueId = 1;
 
+// Cap game-set inertia to this multiple of Box3D's native value; IVP's raw inertia destabilizes ragdolls.
+static ConVar vbox_inertia_scale(
+    "vbox_inertia_scale", "2", FCVAR_NONE, "Max multiple of Box3D's native inertia a SetInertia may apply.", true, 0.0f, true,
+    1000.0f);
+
 namespace
 {
     // Run a callable over every shape on a body.
@@ -33,6 +38,13 @@ namespace
         b3Body_GetShapes(bodyId, shapes.Base(), nCount);
         for (int i = 0; i < nCount; i++)
             fn(shapes[i]);
+    }
+
+    // Integral of a differential drag area's torque over an OBB half-extent (IVP RecomputeDragBases).
+    float AngDragIntegral(float flInvInertia, float l, float w, float h)
+    {
+        const float w2 = w * w, l2 = l * l, h2 = h * h;
+        return flInvInertia * ((1.0f / 3.0f) * w2 * l * l2 + 0.5f * w2 * w2 * l + l * w2 * h2);
     }
 } // namespace
 
@@ -58,6 +70,9 @@ Box3DPhysicsObject::Box3DPhysicsObject(
         m_flLinearDamping = pParams->damping;
         m_flAngularDamping = pParams->rotdamping;
         m_flVolume = pParams->volume;
+        m_flDragCoefficient = pParams->dragCoefficient;
+        m_flAngularDragCoefficient = pParams->dragCoefficient;
+        m_bDragEnabled = pParams->dragCoefficient != 0.0f;
         if (!bStatic)
         {
             b3Body_SetLinearDamping(bodyId, pParams->damping);
@@ -77,6 +92,7 @@ Box3DPhysicsObject::Box3DPhysicsObject(
     if (surfacedata_t* pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(m_materialIndex))
         m_flMaterialDensity = pSurface->physics.density;
     CalculateBuoyancy();
+    RecomputeDragBases();
 }
 
 // Buoyancy ratio = (mass/volume) / material density, so a prop sinks iff its material density > the water's,
@@ -267,6 +283,7 @@ void Box3DPhysicsObject::SetMass(float mass)
     massData.inertia.cz.y *= scale;
     massData.inertia.cz.z *= scale;
     b3Body_SetMassData(m_BodyId, massData);
+    RecomputeDragBases();
 }
 
 float Box3DPhysicsObject::GetMass() const
@@ -299,14 +316,18 @@ void Box3DPhysicsObject::SetInertia(const Vector& inertia)
     if (m_bStatic)
         return;
 
-    const Vector vecAbs = Vector(fabsf(inertia.x), fabsf(inertia.y), fabsf(inertia.z));
-
+    // Clamp to vbox_inertia_scale x Box3D's native inertia; IVP's raw value flails active ragdolls.
+    const float flScale = vbox_inertia_scale.GetFloat();
     b3MassData massData = b3Body_GetMassData(m_BodyId);
+    const float capX = fabsf(massData.inertia.cx.x) * flScale;
+    const float capY = fabsf(massData.inertia.cy.y) * flScale;
+    const float capZ = fabsf(massData.inertia.cz.z) * flScale;
     massData.inertia = b3Matrix3{};
-    massData.inertia.cx.x = vecAbs.x;
-    massData.inertia.cy.y = vecAbs.y;
-    massData.inertia.cz.z = vecAbs.z;
+    massData.inertia.cx.x = Min(fabsf(inertia.x), capX);
+    massData.inertia.cy.y = Min(fabsf(inertia.y), capY);
+    massData.inertia.cz.z = Min(fabsf(inertia.z), capZ);
     b3Body_SetMassData(m_BodyId, massData);
+    RecomputeDragBases();
 }
 
 void Box3DPhysicsObject::SetDamping(const float* speed, const float* rot)
@@ -333,8 +354,68 @@ void Box3DPhysicsObject::GetDamping(float* speed, float* rot) const
         *rot = m_flAngularDamping;
 }
 
-void Box3DPhysicsObject::SetDragCoefficient(float*, float*)
+void Box3DPhysicsObject::SetDragCoefficient(float* pDrag, float* pAngularDrag)
 {
+    if (pDrag)
+        m_flDragCoefficient = *pDrag;
+    if (pAngularDrag)
+        m_flAngularDragCoefficient = *pAngularDrag;
+    m_bDragEnabled = m_flDragCoefficient != 0.0f || m_flAngularDragCoefficient != 0.0f;
+    RecomputeDragBases();
+}
+
+void Box3DPhysicsObject::RecomputeDragBases()
+{
+    m_dragBasis = vec3_origin;
+    m_angDragBasis = vec3_origin;
+    if (m_bStatic || !m_pCollide)
+        return;
+
+    // OBB drag basis: face areas (linear) and the swept-area integral (angular), over inverse mass/inertia.
+    Vector mins, maxs;
+    Box3DPhysicsCollision::GetInstance().CollideGetAABB(&mins, &maxs, m_pCollide, vec3_origin, vec3_angle);
+    const Vector areaFractions = Box3DPhysicsCollision::GetInstance().CollideGetOrthographicAreas(m_pCollide);
+
+    Vector delta = maxs - mins;
+    delta.x = fabsf(SourceToBox::Distance(delta.x));
+    delta.y = fabsf(SourceToBox::Distance(delta.y));
+    delta.z = fabsf(SourceToBox::Distance(delta.z));
+
+    m_dragBasis.x = delta.y * delta.z * areaFractions.x;
+    m_dragBasis.y = delta.x * delta.z * areaFractions.y;
+    m_dragBasis.z = delta.x * delta.y * areaFractions.z;
+    m_dragBasis *= GetInvMass();
+
+    const Vector invInertia = GetInvInertia();
+    delta *= 0.5f; // half-extents
+    m_angDragBasis.x = areaFractions.z * AngDragIntegral(invInertia.x, delta.x, delta.y, delta.z)
+        + areaFractions.y * AngDragIntegral(invInertia.x, delta.x, delta.z, delta.y);
+    m_angDragBasis.y = areaFractions.z * AngDragIntegral(invInertia.y, delta.y, delta.x, delta.z)
+        + areaFractions.x * AngDragIntegral(invInertia.y, delta.y, delta.z, delta.x);
+    m_angDragBasis.z = areaFractions.y * AngDragIntegral(invInertia.z, delta.z, delta.x, delta.y)
+        + areaFractions.x * AngDragIntegral(invInertia.z, delta.z, delta.y, delta.x);
+}
+
+void Box3DPhysicsObject::ApplyAirDrag(float flAirDensity, float dt)
+{
+    if (!m_bDragEnabled || m_bStatic)
+        return;
+
+    const b3Vec3 vWorld = b3Body_GetLinearVelocity(m_BodyId);
+    const b3Vec3 vLocal = b3Body_GetLocalVector(m_BodyId, vWorld);
+    const float flDrag = m_flDragCoefficient
+        * (fabsf(vLocal.x * m_dragBasis.x) + fabsf(vLocal.y * m_dragBasis.y) + fabsf(vLocal.z * m_dragBasis.z));
+    const float flDragForce = -0.5f * flDrag * flAirDensity * dt;
+    if (flDragForce < 0.0f)
+        b3Body_SetLinearVelocity(m_BodyId, b3MulSV(1.0f + Max(flDragForce, -1.0f), vWorld));
+
+    const b3Vec3 wWorld = b3Body_GetAngularVelocity(m_BodyId);
+    const b3Vec3 wLocal = b3Body_GetLocalVector(m_BodyId, wWorld);
+    const float flAngDrag = m_flAngularDragCoefficient
+        * (fabsf(wLocal.x * m_angDragBasis.x) + fabsf(wLocal.y * m_angDragBasis.y) + fabsf(wLocal.z * m_angDragBasis.z));
+    const float flAngDragForce = -flAngDrag * flAirDensity * dt;
+    if (flAngDragForce < 0.0f)
+        b3Body_SetAngularVelocity(m_BodyId, b3MulSV(1.0f + Max(flAngDragForce, -1.0f), wWorld));
 }
 void Box3DPhysicsObject::SetBuoyancyRatio(float ratio)
 {
@@ -407,7 +488,7 @@ float Box3DPhysicsObject::GetEnergy() const
 
 Vector Box3DPhysicsObject::GetMassCenterLocalSpace() const
 {
-    return BoxToSource::Distance(b3Body_GetLocalCenterOfMass(m_BodyId));
+    return BoxToSource::Distance(b3Body_GetLocalCenter(m_BodyId));
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -486,7 +567,6 @@ void Box3DPhysicsObject::GetVelocity(Vector* velocity, AngularImpulse* angularVe
             if (!m_bStatic)
                 b3Body_SetAngularVelocity(m_BodyId, w);
         }
-        // The interface's angular velocity is in object space (IVP's core frame).
         const Vector vecWorldAngular = BoxToSource::AngularImpulse(w);
         WorldToLocalVector(angularVelocity, vecWorldAngular);
         if (!angularVelocity->IsValid())
@@ -596,7 +676,7 @@ void Box3DPhysicsObject::CalculateForceOffset(
     if (centerTorque)
     {
         Vector com;
-        com = BoxToSource::Distance(b3Body_GetWorldCenterOfMass(m_BodyId));
+        com = BoxToSource::Distance(b3Body_GetWorldCenter(m_BodyId));
         const Vector worldTorque = CrossProduct(worldPosition - com, forceVector);
         WorldToLocalVector(centerTorque, worldTorque);
     }

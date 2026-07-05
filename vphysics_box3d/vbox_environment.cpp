@@ -405,6 +405,14 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
 
     m_flSimulationClock += deltaTime;
 
+    // IVP-style quadratic air drag (CDragController) on every awake body.
+    for (int i = 0; i < m_Objects.Count(); i++)
+    {
+        Box3DPhysicsObject* pObject = m_Objects[i];
+        if (pObject->IsDragEnabled() && !pObject->IsStatic() && !pObject->IsAsleep())
+            pObject->ApplyAirDrag(m_flAirDensity, deltaTime);
+    }
+
     b3World_SetContactTuning(
         m_WorldId, vbox_contact_hertz.GetFloat(), vbox_contact_damping.GetFloat(),
         SourceToBox::Distance(vbox_contact_speed.GetFloat()));

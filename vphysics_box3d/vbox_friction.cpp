@@ -31,7 +31,7 @@ Box3DFrictionSnapshot::Box3DFrictionSnapshot(Box3DPhysicsObject* pSelf, float fl
         if (!pOther)
             continue;
 
-        const b3Pos comA = b3Body_GetWorldCenterOfMass(bodyA);
+        const b3Pos comA = b3Body_GetWorldCenter(bodyA);
 
         for (int m = 0; m < contact.manifoldCount; m++)
         {

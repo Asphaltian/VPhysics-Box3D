@@ -54,8 +54,8 @@ Box3DFrictionSnapshot::Box3DFrictionSnapshot(Box3DPhysicsObject* pSelf, float fl
                 entry.vPoint = BoxToSource::Distance(
                     b3Vec3{ comA.x + point.anchorA.x, comA.y + point.anchorA.y, comA.z + point.anchorA.z });
                 entry.flNormalForce = BoxToSource::Distance(point.totalNormalImpulse * flInvStep);
-                entry.flEnergy =
-                    BoxToSource::Distance(BoxToSource::Distance(fabsf(point.totalNormalImpulse * point.normalVelocity)));
+                entry.flEnergy = BoxToSource::Distance(
+                    BoxToSource::Distance(fabsf(point.totalNormalImpulse * point.normalVelocity)));
                 m_Entries.AddToTail(entry);
             }
         }
@@ -125,10 +125,10 @@ float Box3DFrictionSnapshot::GetFrictionCoefficient()
 {
     if (!IsValid())
         return 0.0f;
-    const surfacedata_t* pSelfSurf =
-        Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(m_Entries[m_nIndex].pSelf->GetMaterialIndex());
-    const surfacedata_t* pOtherSurf =
-        Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(m_Entries[m_nIndex].pOther->GetMaterialIndex());
+    const surfacedata_t* pSelfSurf = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(
+        m_Entries[m_nIndex].pSelf->GetMaterialIndex());
+    const surfacedata_t* pOtherSurf = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(
+        m_Entries[m_nIndex].pOther->GetMaterialIndex());
     const float flSelf = pSelfSurf ? pSelfSurf->physics.friction : 0.0f;
     const float flOther = pOtherSurf ? pOtherSurf->physics.friction : flSelf;
     return flSelf * flOther;

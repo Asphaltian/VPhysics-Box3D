@@ -9,102 +9,90 @@
 
 //-------------------------------------------------------------------------------------------------
 
-const Box3DKVSchemaFunc_t FillBaseProp = {
-    sizeof(surfacedata_t),
-    [](KeyValues* pProp, void* pPtr, size_t size) {
-        surfacedata_t* pSurfaceDataPtr = reinterpret_cast<surfacedata_t*>(pPtr);
+const Box3DKVSchemaFunc_t FillBaseProp = { sizeof(surfacedata_t), [](KeyValues* pProp, void* pPtr, size_t size) {
+    surfacedata_t* pSurfaceDataPtr = reinterpret_cast<surfacedata_t*>(pPtr);
 
-        int nSurfaceIndex = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceIndex(pProp->GetString());
-        if (nSurfaceIndex == -1)
-        {
-            Log_Warning(
-                LOG_VBox3D, "You must specify the base material %s before it can be used. Defaulting to 'default' as a base.\n",
-                pProp->GetString());
-            // Always the default material.
-            nSurfaceIndex = 0;
-        }
-
-        *pSurfaceDataPtr = *Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(nSurfaceIndex);
+    int nSurfaceIndex = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceIndex(pProp->GetString());
+    if (nSurfaceIndex == -1)
+    {
+        Log_Warning(
+            LOG_VBox3D, "You must specify the base material %s before it can be used. Defaulting to 'default' as a base.\n",
+            pProp->GetString());
+        // Always the default material.
+        nSurfaceIndex = 0;
     }
-};
 
-const Box3DKVSchemaFunc_t FillStringProp = { 0, // Varies.
-                                             [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                 char* pszStringPtr = reinterpret_cast<char*>(pPtr);
-                                                 V_strncpy(pszStringPtr, pProp->GetString(), static_cast<strlen_t>(size));
-                                             } };
+    *pSurfaceDataPtr = *Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(nSurfaceIndex);
+} };
+
+const Box3DKVSchemaFunc_t FillStringProp = { 0 /* Varies */, [](KeyValues* pProp, void* pPtr, size_t size) {
+    char* pszStringPtr = reinterpret_cast<char*>(pPtr);
+    V_strncpy(pszStringPtr, pProp->GetString(), static_cast<strlen_t>(size));
+} };
 
 const Box3DKVSchemaFunc_t FillIntProp = { sizeof(int), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                             int* pIntPtr = reinterpret_cast<int*>(pPtr);
-                                             *pIntPtr = pProp->GetInt();
-                                         } };
+    int* pIntPtr = reinterpret_cast<int*>(pPtr);
+    *pIntPtr = pProp->GetInt();
+} };
 
 const Box3DKVSchemaFunc_t FillFloatProp = { sizeof(float), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                               float* pFloatPtr = reinterpret_cast<float*>(pPtr);
-                                               *pFloatPtr = pProp->GetFloat();
-                                           } };
+    float* pFloatPtr = reinterpret_cast<float*>(pPtr);
+    *pFloatPtr = pProp->GetFloat();
+} };
 
 const Box3DKVSchemaFunc_t FillUnsignedCharProp = { sizeof(unsigned char), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                      unsigned char* pCharPtr = reinterpret_cast<unsigned char*>(pPtr);
-                                                      *pCharPtr = static_cast<unsigned char>(pProp->GetInt());
-                                                  } };
+    unsigned char* pCharPtr = reinterpret_cast<unsigned char*>(pPtr);
+    *pCharPtr = static_cast<unsigned char>(pProp->GetInt());
+} };
 
 const Box3DKVSchemaFunc_t FillBoolProp = { sizeof(bool), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                              bool* pBoolPtr = reinterpret_cast<bool*>(pPtr);
-                                              *pBoolPtr = pProp->GetBool();
-                                          } };
+    bool* pBoolPtr = reinterpret_cast<bool*>(pPtr);
+    *pBoolPtr = pProp->GetBool();
+} };
 
 const Box3DKVSchemaFunc_t FillVectorProp = { sizeof(Vector), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                Vector* pVectorPtr = reinterpret_cast<Vector*>(pPtr);
-                                                sscanf(
-                                                    pProp->GetString(), "%f %f %f", &pVectorPtr->x, &pVectorPtr->y,
-                                                    &pVectorPtr->z);
-                                            } };
+    Vector* pVectorPtr = reinterpret_cast<Vector*>(pPtr);
+    sscanf(pProp->GetString(), "%f %f %f", &pVectorPtr->x, &pVectorPtr->y, &pVectorPtr->z);
+} };
 
 const Box3DKVSchemaFunc_t FillVector4DProp = { sizeof(Vector4D), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                  Vector4D* pVector4DPtr = reinterpret_cast<Vector4D*>(pPtr);
-                                                  sscanf(
-                                                      pProp->GetString(), "%f %f %f %f", &pVector4DPtr->x, &pVector4DPtr->y,
-                                                      &pVector4DPtr->z, &pVector4DPtr->w);
-                                              } };
+    Vector4D* pVector4DPtr = reinterpret_cast<Vector4D*>(pPtr);
+    sscanf(pProp->GetString(), "%f %f %f %f", &pVector4DPtr->x, &pVector4DPtr->y, &pVector4DPtr->z, &pVector4DPtr->w);
+} };
 
 const Box3DKVSchemaFunc_t FillQAngleProp = { sizeof(QAngle), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                QAngle* pQAnglePtr = reinterpret_cast<QAngle*>(pPtr);
-                                                sscanf(
-                                                    pProp->GetString(), "%f %f %f", &pQAnglePtr->x, &pQAnglePtr->y,
-                                                    &pQAnglePtr->z);
-                                            } };
+    QAngle* pQAnglePtr = reinterpret_cast<QAngle*>(pPtr);
+    sscanf(pProp->GetString(), "%f %f %f", &pQAnglePtr->x, &pQAnglePtr->y, &pQAnglePtr->z);
+} };
 
 const Box3DKVSchemaFunc_t FillIntPairProp = { sizeof(Box3DPhysicsIntPair), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                 Box3DPhysicsIntPair* pIntPairPtr = reinterpret_cast<Box3DPhysicsIntPair*>(
-                                                     pPtr);
-                                                 sscanf(
-                                                     pProp->GetString(), "%d,%d", &pIntPairPtr->Index0, &pIntPairPtr->Index1);
-                                             } };
+    Box3DPhysicsIntPair* pIntPairPtr = reinterpret_cast<Box3DPhysicsIntPair*>(pPtr);
+    sscanf(pProp->GetString(), "%d,%d", &pIntPairPtr->Index0, &pIntPairPtr->Index1);
+} };
 
 const Box3DKVSchemaFunc_t FillGameMaterialProp = { sizeof(unsigned short), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                      const char* pValue = pProp->GetString();
-                                                      unsigned short* pShortPtr = reinterpret_cast<unsigned short*>(pPtr);
+    const char* pValue = pProp->GetString();
+    unsigned short* pShortPtr = reinterpret_cast<unsigned short*>(pPtr);
 
-                                                      if (V_strlen(pValue) == 1 && !V_isdigit(pValue[0]))
-                                                          *pShortPtr = FastASCIIToUpper(pValue[0]);
-                                                      else
-                                                          *pShortPtr = pProp->GetInt();
-                                                  } };
+    if (V_strlen(pValue) == 1 && !V_isdigit(pValue[0]))
+        *pShortPtr = FastASCIIToUpper(pValue[0]);
+    else
+        *pShortPtr = pProp->GetInt();
+} };
 
 const Box3DKVSchemaFunc_t FillSoundProp = { sizeof(unsigned short), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                               const char* pValue = pProp->GetString();
-                                               unsigned short* pShortPtr = reinterpret_cast<unsigned short*>(pPtr);
+    const char* pValue = pProp->GetString();
+    unsigned short* pShortPtr = reinterpret_cast<unsigned short*>(pPtr);
 
-                                               *pShortPtr = Box3DPhysicsSurfaceProps::GetInstance().RegisterSound(pValue);
-                                           } };
+    *pShortPtr = Box3DPhysicsSurfaceProps::GetInstance().RegisterSound(pValue);
+} };
 
 const Box3DKVSchemaFunc_t FillSurfaceProp = { sizeof(int), [](KeyValues* pProp, void* pPtr, size_t size) {
-                                                 const char* pValue = pProp->GetString();
-                                                 int* pIntPtr = reinterpret_cast<int*>(pPtr);
+    const char* pValue = pProp->GetString();
+    int* pIntPtr = reinterpret_cast<int*>(pPtr);
 
-                                                 *pIntPtr = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceIndex(pValue);
-                                             } };
+    *pIntPtr = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceIndex(pValue);
+} };
 
 //-------------------------------------------------------------------------------------------------
 

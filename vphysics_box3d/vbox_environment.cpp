@@ -7,7 +7,6 @@
 #include "vbox_environment.h"
 
 #include "cbase.h"
-#include "tier0/memdbgon.h"
 #include "tier0/threadtools.h"
 #include "tier1/convar.h"
 #include "vbox_collide.h"
@@ -20,6 +19,8 @@
 #include "vbox_surfaceprops.h"
 
 #include <atomic>
+
+#include "tier0/memdbgon.h"
 
 static ConVar vbox_substeps("vbox_substeps", "16", FCVAR_NONE, "Solver substeps per physics step.", true, 1.0f, true, 1024.0f);
 static ConVar vbox_contact_hertz(

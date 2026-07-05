@@ -59,12 +59,12 @@ static const Box3DKVSchemaProp_t kSolidDescs[] = {
     { "SurfaceProp", KVSCHEMA_DESC(solid_t, surfaceprop), FillStringProp },
     { "MassCenterOverride", KVSCHEMA_DESC(solid_t, massCenterOverride), FillVectorProp,
       [](void* pBaseObject) {
-          // Josh:
-          // If we ended up setting this, we need to update the pointer
-          // of the params to point to our Vector.
-          solid_t* pSolid = reinterpret_cast<solid_t*>(pBaseObject);
-          pSolid->params.massCenterOverride = &pSolid->massCenterOverride;
-      } },
+    // Josh:
+    // If we ended up setting this, we need to update the pointer
+    // of the params to point to our Vector.
+    solid_t* pSolid = reinterpret_cast<solid_t*>(pBaseObject);
+    pSolid->params.massCenterOverride = &pSolid->massCenterOverride;
+} },
     { "Damping", KVSCHEMA_DESC(solid_t, params.damping), FillFloatProp },
     { "RotDamping", KVSCHEMA_DESC(solid_t, params.rotdamping), FillFloatProp },
     { "Drag", KVSCHEMA_DESC(solid_t, params.dragCoefficient), FillFloatProp },
@@ -100,27 +100,27 @@ static const Box3DKVSchemaProp_t kRagdollDescs[] = {
         KVSCHEMA_DESC(constraint_ragdollparams_t, axes[0].torque),
         FillFloatProp,
         [](void* pBaseObject) {
-            constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
-            pParams->axes[0].angularVelocity = 0;
-        },
+    constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
+    pParams->axes[0].angularVelocity = 0;
+},
     },
     {
         "YFriction",
         KVSCHEMA_DESC(constraint_ragdollparams_t, axes[1].torque),
         FillFloatProp,
         [](void* pBaseObject) {
-            constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
-            pParams->axes[1].angularVelocity = 0;
-        },
+    constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
+    pParams->axes[1].angularVelocity = 0;
+},
     },
     {
         "ZFriction",
         KVSCHEMA_DESC(constraint_ragdollparams_t, axes[2].torque),
         FillFloatProp,
         [](void* pBaseObject) {
-            constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
-            pParams->axes[2].angularVelocity = 0;
-        },
+    constraint_ragdollparams_t* pParams = reinterpret_cast<constraint_ragdollparams_t*>(pBaseObject);
+    pParams->axes[2].angularVelocity = 0;
+},
     },
 };
 
@@ -149,16 +149,16 @@ static const Box3DKVSchemaProp_t kVehicleAxleDescs[] = {
       KVSCHEMA_DESC(vehicle_axleparams_t, wheels),
       { sizeof(vehicle_wheelparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_wheelparams_t* pWheelParams = reinterpret_cast<vehicle_wheelparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleAxleWheelDescs, ARRAYSIZE(kVehicleAxleWheelDescs), pWheelParams);
-        } } },
+    vehicle_wheelparams_t* pWheelParams = reinterpret_cast<vehicle_wheelparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleAxleWheelDescs, ARRAYSIZE(kVehicleAxleWheelDescs), pWheelParams);
+} } },
     { "Suspension",
       KVSCHEMA_DESC(vehicle_axleparams_t, suspension),
       { sizeof(vehicle_suspensionparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_suspensionparams_t* pSuspensionParams = reinterpret_cast<vehicle_suspensionparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleAxleSuspensionDescs, ARRAYSIZE(kVehicleAxleSuspensionDescs), pSuspensionParams);
-        } } },
+    vehicle_suspensionparams_t* pSuspensionParams = reinterpret_cast<vehicle_suspensionparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleAxleSuspensionDescs, ARRAYSIZE(kVehicleAxleSuspensionDescs), pSuspensionParams);
+} } },
     { "Offset", KVSCHEMA_DESC(vehicle_axleparams_t, offset), FillVectorProp },
     { "WheelOffset", KVSCHEMA_DESC(vehicle_axleparams_t, wheelOffset), FillVectorProp },
     { "TorqueFactor", KVSCHEMA_DESC(vehicle_axleparams_t, torqueFactor), FillFloatProp },
@@ -189,9 +189,9 @@ static const Box3DKVSchemaProp_t kVehicleEngineDescs[] = {
       KVSCHEMA_DESC_NO_OFFSET(vehicle_engineparams_t),
       { sizeof(vehicle_engineparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_engineparams_t* pEngineParams = reinterpret_cast<vehicle_engineparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleEngineBoostDescs, ARRAYSIZE(kVehicleEngineBoostDescs), pEngineParams);
-        } } },
+    vehicle_engineparams_t* pEngineParams = reinterpret_cast<vehicle_engineparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleEngineBoostDescs, ARRAYSIZE(kVehicleEngineBoostDescs), pEngineParams);
+} } },
     { "Gear", KVSCHEMA_DESC_ARRAY(vehicle_engineparams_t, gearRatio, gearCount), FillFloatProp },
     { "Horsepower", KVSCHEMA_DESC(vehicle_engineparams_t, horsepower), FillFloatProp },
     { "MaxSpeed", KVSCHEMA_DESC(vehicle_engineparams_t, maxSpeed), FillFloatProp },
@@ -241,30 +241,30 @@ static const Box3DKVSchemaProp_t kVehicleDescs[] = {
       KVSCHEMA_DESC_ARRAY(vehicleparams_t, axles, axleCount),
       { sizeof(vehicle_axleparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_axleparams_t* pAxleParams = reinterpret_cast<vehicle_axleparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleAxleDescs, ARRAYSIZE(kVehicleAxleDescs), pAxleParams);
-        } } },
+    vehicle_axleparams_t* pAxleParams = reinterpret_cast<vehicle_axleparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleAxleDescs, ARRAYSIZE(kVehicleAxleDescs), pAxleParams);
+} } },
     { "Body",
       KVSCHEMA_DESC(vehicleparams_t, body),
       { sizeof(vehicle_bodyparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_bodyparams_t* pBodyParams = reinterpret_cast<vehicle_bodyparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleBodyDescs, ARRAYSIZE(kVehicleBodyDescs), pBodyParams);
-        } } },
+    vehicle_bodyparams_t* pBodyParams = reinterpret_cast<vehicle_bodyparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleBodyDescs, ARRAYSIZE(kVehicleBodyDescs), pBodyParams);
+} } },
     { "Engine",
       KVSCHEMA_DESC(vehicleparams_t, engine),
       { sizeof(vehicle_engineparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_engineparams_t* pEngineParams = reinterpret_cast<vehicle_engineparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleEngineDescs, ARRAYSIZE(kVehicleEngineDescs), pEngineParams);
-        } } },
+    vehicle_engineparams_t* pEngineParams = reinterpret_cast<vehicle_engineparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleEngineDescs, ARRAYSIZE(kVehicleEngineDescs), pEngineParams);
+} } },
     { "Steering",
       KVSCHEMA_DESC(vehicleparams_t, steering),
       { sizeof(vehicle_steeringparams_t),
         [](KeyValues* pProp, void* pPtr, size_t size) {
-            vehicle_steeringparams_t* pSteeringParams = reinterpret_cast<vehicle_steeringparams_t*>(pPtr);
-            ParseBox3DKVSchema(pProp, kVehicleSteeringDescs, ARRAYSIZE(kVehicleSteeringDescs), pSteeringParams);
-        } } },
+    vehicle_steeringparams_t* pSteeringParams = reinterpret_cast<vehicle_steeringparams_t*>(pPtr);
+    ParseBox3DKVSchema(pProp, kVehicleSteeringDescs, ARRAYSIZE(kVehicleSteeringDescs), pSteeringParams);
+} } },
     { "WheelsPerAxle", KVSCHEMA_DESC(vehicleparams_t, wheelsPerAxle), FillIntProp },
 };
 
@@ -272,12 +272,12 @@ static const Box3DKVSchemaProp_t kCollisionRulesDescs[] = {
     { "SelfCollisions", KVSCHEMA_DESC(Box3DPhysicsCollisionRulesHelper, Rules.bSelfCollisions), FillIntProp },
     { "CollisionPair", KVSCHEMA_DESC(Box3DPhysicsCollisionRulesHelper, CollisionPair), FillIntPairProp,
       [](void* pBaseObject) {
-          // Josh:
-          // Now that it's been parsed, set it on the collision set.
-          Box3DPhysicsCollisionRulesHelper* pHelper = reinterpret_cast<Box3DPhysicsCollisionRulesHelper*>(pBaseObject);
-          if (pHelper->Rules.bSelfCollisions)
-              pHelper->Rules.pCollisionSet->EnableCollisions(pHelper->CollisionPair.Index0, pHelper->CollisionPair.Index1);
-      } },
+    // Josh:
+    // Now that it's been parsed, set it on the collision set.
+    Box3DPhysicsCollisionRulesHelper* pHelper = reinterpret_cast<Box3DPhysicsCollisionRulesHelper*>(pBaseObject);
+    if (pHelper->Rules.bSelfCollisions)
+        pHelper->Rules.pCollisionSet->EnableCollisions(pHelper->CollisionPair.Index0, pHelper->CollisionPair.Index1);
+} },
 };
 
 static const Box3DKVSchemaProp_t kRagdollAnimatedFrictionDescs[] = {

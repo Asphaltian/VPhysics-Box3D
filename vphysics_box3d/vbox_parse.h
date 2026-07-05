@@ -5,5 +5,5 @@
 
 class IVPhysicsKeyParser;
 
-IVPhysicsKeyParser* CreateVPhysicsKeyParser( const char* pKeyData, bool bIsPacked );
-void DestroyVPhysicsKeyParser( IVPhysicsKeyParser* pParser );
+IVPhysicsKeyParser* CreateVPhysicsKeyParser(const char* pKeyData, bool bIsPacked);
+void DestroyVPhysicsKeyParser(IVPhysicsKeyParser* pParser);

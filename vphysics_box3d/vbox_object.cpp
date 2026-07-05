@@ -4,14 +4,13 @@
 //
 //=================================================================================================
 
-#include "cbase.h"
-
 #include "vbox_object.h"
-#include "vbox_environment.h"
+
+#include "cbase.h"
 #include "vbox_collide.h"
 #include "vbox_controller_shadow.h"
+#include "vbox_environment.h"
 #include "vbox_surfaceprops.h"
-
 #include "vphysics/friction.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -24,527 +23,701 @@ static uint64 s_nNextUniqueId = 1;
 
 namespace
 {
-	// The game iterates `while ( snapshot->IsValid() )` without null-checking, so we return a valid
-	// empty snapshot rather than null.
-	class Box3DDummyFrictionSnapshot final : public IPhysicsFrictionSnapshot
-	{
-	public:
-		bool IsValid() override { return false; }
-		IPhysicsObject *GetObject( int ) override { return nullptr; }
-		int GetMaterial( int ) override { return 0; }
-		void GetContactPoint( Vector &out ) override { out = vec3_origin; }
-		void GetSurfaceNormal( Vector &out ) override { out = vec3_origin; }
-		float GetNormalForce() override { return 0.0f; }
-		float GetEnergyAbsorbed() override { return 0.0f; }
-		void RecomputeFriction() override {}
-		void ClearFrictionForce() override {}
-		void MarkContactForDelete() override {}
-		void DeleteAllMarkedContacts( bool ) override {}
-		void NextFrictionData() override {}
-		float GetFrictionCoefficient() override { return 0.0f; }
-	};
+    // The game iterates `while ( snapshot->IsValid() )` without null-checking, so we return a valid
+    // empty snapshot rather than null.
+    class Box3DDummyFrictionSnapshot final : public IPhysicsFrictionSnapshot
+    {
+    public:
+        bool IsValid() override
+        {
+            return false;
+        }
+        IPhysicsObject* GetObject(int) override
+        {
+            return nullptr;
+        }
+        int GetMaterial(int) override
+        {
+            return 0;
+        }
+        void GetContactPoint(Vector& out) override
+        {
+            out = vec3_origin;
+        }
+        void GetSurfaceNormal(Vector& out) override
+        {
+            out = vec3_origin;
+        }
+        float GetNormalForce() override
+        {
+            return 0.0f;
+        }
+        float GetEnergyAbsorbed() override
+        {
+            return 0.0f;
+        }
+        void RecomputeFriction() override
+        {
+        }
+        void ClearFrictionForce() override
+        {
+        }
+        void MarkContactForDelete() override
+        {
+        }
+        void DeleteAllMarkedContacts(bool) override
+        {
+        }
+        void NextFrictionData() override
+        {
+        }
+        float GetFrictionCoefficient() override
+        {
+            return 0.0f;
+        }
+    };
 
-	// Run a callable over every shape on a body.
-	template < typename Fn >
-	void ForEachShape( b3BodyId bodyId, Fn fn )
-	{
-		const int nCount = b3Body_GetShapeCount( bodyId );
-		CUtlVector< b3ShapeId > shapes;
-		shapes.SetCount( nCount );
-		b3Body_GetShapes( bodyId, shapes.Base(), nCount );
-		for ( int i = 0; i < nCount; i++ )
-			fn( shapes[ i ] );
-	}
-}
+    // Run a callable over every shape on a body.
+    template<typename Fn> void ForEachShape(b3BodyId bodyId, Fn fn)
+    {
+        const int nCount = b3Body_GetShapeCount(bodyId);
+        CUtlVector<b3ShapeId> shapes;
+        shapes.SetCount(nCount);
+        b3Body_GetShapes(bodyId, shapes.Base(), nCount);
+        for (int i = 0; i < nCount; i++)
+            fn(shapes[i]);
+    }
+} // namespace
 
-Box3DPhysicsObject::Box3DPhysicsObject( b3BodyId bodyId, Box3DPhysicsEnvironment *pEnvironment, bool bStatic, int nMaterialIndex, const CPhysCollide *pCollide, const objectparams_t *pParams )
-	: m_bStatic( bStatic )
-	, m_materialIndex( nMaterialIndex )
-	, m_pCollide( pCollide )
-	, m_BodyId( bodyId )
-	, m_pEnvironment( pEnvironment )
+Box3DPhysicsObject::Box3DPhysicsObject(
+    b3BodyId bodyId, Box3DPhysicsEnvironment* pEnvironment, bool bStatic, int nMaterialIndex, const CPhysCollide* pCollide,
+    const objectparams_t* pParams)
+    : m_bStatic(bStatic)
+    , m_materialIndex(nMaterialIndex)
+    , m_pCollide(pCollide)
+    , m_BodyId(bodyId)
+    , m_pEnvironment(pEnvironment)
 {
-	m_WorldId = b3Body_GetWorld( bodyId );
-	b3Body_SetUserData( bodyId, this );
-	m_nUniqueId = s_nNextUniqueId++;
+    m_WorldId = b3Body_GetWorld(bodyId);
+    b3Body_SetUserData(bodyId, this);
+    m_nUniqueId = s_nNextUniqueId++;
 
-	if ( pParams )
-	{
-		m_pGameData = pParams->pGameData;
-		if ( pParams->pName )
-			m_pName = pParams->pName;
+    if (pParams)
+    {
+        m_pGameData = pParams->pGameData;
+        if (pParams->pName)
+            m_pName = pParams->pName;
 
-		m_flLinearDamping = pParams->damping;
-		m_flAngularDamping = pParams->rotdamping;
-		m_flVolume = pParams->volume;
-		if ( !bStatic )
-		{
-			b3Body_SetLinearDamping( bodyId, pParams->damping );
-			b3Body_SetAngularDamping( bodyId, pParams->rotdamping );
-		}
+        m_flLinearDamping = pParams->damping;
+        m_flAngularDamping = pParams->rotdamping;
+        m_flVolume = pParams->volume;
+        if (!bStatic)
+        {
+            b3Body_SetLinearDamping(bodyId, pParams->damping);
+            b3Body_SetAngularDamping(bodyId, pParams->rotdamping);
+        }
 
-		if ( pParams->mass > 0.0f )
-			SetMass( pParams->mass );
-	}
+        if (pParams->mass > 0.0f)
+            SetMass(pParams->mass);
+    }
 
-	if ( m_flCachedMass <= 0.0f )
-	{
-		m_flCachedMass = bStatic ? 0.0f : b3Body_GetMass( bodyId );
-		m_flCachedInvMass = bStatic ? 0.0f : b3Body_GetInverseMass( bodyId );
-	}
+    if (m_flCachedMass <= 0.0f)
+    {
+        m_flCachedMass = bStatic ? 0.0f : b3Body_GetMass(bodyId);
+        m_flCachedInvMass = bStatic ? 0.0f : b3Body_GetInverseMass(bodyId);
+    }
 
-	if ( surfacedata_t *pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData( m_materialIndex ) )
-		m_flMaterialDensity = pSurface->physics.density;
-	CalculateBuoyancy();
+    if (surfacedata_t* pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(m_materialIndex))
+        m_flMaterialDensity = pSurface->physics.density;
+    CalculateBuoyancy();
 }
 
 // Buoyancy ratio = (mass/volume) / material density, so a prop sinks iff its material density > the water's,
 // regardless of how loose its collision hull is.
 void Box3DPhysicsObject::CalculateBuoyancy()
 {
-	if ( m_flVolume > 0.0f && m_flMaterialDensity > 0.0f )
-	{
-		const float flVolume = SourceToBox::Volume( Max( m_flVolume, 5.0f ) );
-		const float flActualDensity = m_flCachedMass / flVolume;
-		m_flBuoyancyRatio = flActualDensity / m_flMaterialDensity;
-	}
-	else
-	{
-		m_flBuoyancyRatio = 1.0f;
-	}
+    if (m_flVolume > 0.0f && m_flMaterialDensity > 0.0f)
+    {
+        const float flVolume = SourceToBox::Volume(Max(m_flVolume, 5.0f));
+        const float flActualDensity = m_flCachedMass / flVolume;
+        m_flBuoyancyRatio = flActualDensity / m_flMaterialDensity;
+    }
+    else
+    {
+        m_flBuoyancyRatio = 1.0f;
+    }
 }
 
 Box3DPhysicsObject::~Box3DPhysicsObject()
 {
-	// The environment owns the Box3D body lifetime (b3DestroyBody in DestroyObject).
+    // The environment owns the Box3D body lifetime (b3DestroyBody in DestroyObject).
 }
 
 //-------------------------------------------------------------------------------------------------
 
-bool Box3DPhysicsObject::IsStatic() const						{ return m_bStatic; }
-bool Box3DPhysicsObject::IsAsleep() const						{ return m_bStatic || !b3Body_IsAwake( m_BodyId ); }
-bool Box3DPhysicsObject::IsTrigger() const						{ return m_bTrigger; }
-bool Box3DPhysicsObject::IsFluid() const						{ return false; }
-bool Box3DPhysicsObject::IsHinged() const						{ return false; }
-bool Box3DPhysicsObject::IsCollisionEnabled() const				{ return m_bCollisionEnabled; }
-bool Box3DPhysicsObject::IsGravityEnabled() const				{ return !m_bStatic && m_bGravityEnabled; }
-bool Box3DPhysicsObject::IsDragEnabled() const					{ return m_bDragEnabled; }
-bool Box3DPhysicsObject::IsMotionEnabled() const				{ return !m_bStatic && m_bMotionEnabled; }
-bool Box3DPhysicsObject::IsMoveable() const						{ return IsMotionEnabled(); }
-bool Box3DPhysicsObject::IsAttachedToConstraint( bool ) const	{ return false; }
-
-void Box3DPhysicsObject::EnableCollisions( bool enable )
+bool Box3DPhysicsObject::IsStatic() const
 {
-	if ( m_bCollisionEnabled == enable )
-		return;
-
-	m_bCollisionEnabled = enable;
-
-	if ( !b3Body_IsValid( m_BodyId ) )
-		return;
-
-	b3Filter filter = b3DefaultFilter();
-	if ( !enable )
-		filter.maskBits = 0;
-
-	ForEachShape( m_BodyId, [ & ]( b3ShapeId shape ) { b3Shape_SetFilter( shape, filter, true ); } );
+    return m_bStatic;
+}
+bool Box3DPhysicsObject::IsAsleep() const
+{
+    return m_bStatic || !b3Body_IsAwake(m_BodyId);
+}
+bool Box3DPhysicsObject::IsTrigger() const
+{
+    return m_bTrigger;
+}
+bool Box3DPhysicsObject::IsFluid() const
+{
+    return false;
+}
+bool Box3DPhysicsObject::IsHinged() const
+{
+    return false;
+}
+bool Box3DPhysicsObject::IsCollisionEnabled() const
+{
+    return m_bCollisionEnabled;
+}
+bool Box3DPhysicsObject::IsGravityEnabled() const
+{
+    return !m_bStatic && m_bGravityEnabled;
+}
+bool Box3DPhysicsObject::IsDragEnabled() const
+{
+    return m_bDragEnabled;
+}
+bool Box3DPhysicsObject::IsMotionEnabled() const
+{
+    return !m_bStatic && m_bMotionEnabled;
+}
+bool Box3DPhysicsObject::IsMoveable() const
+{
+    return IsMotionEnabled();
+}
+bool Box3DPhysicsObject::IsAttachedToConstraint(bool) const
+{
+    return false;
 }
 
-void Box3DPhysicsObject::EnableGravity( bool enable )
+void Box3DPhysicsObject::EnableCollisions(bool enable)
 {
-	m_bGravityEnabled = enable;
-	if ( !m_bStatic )
-		b3Body_SetGravityScale( m_BodyId, enable ? 1.0f : 0.0f );
+    if (m_bCollisionEnabled == enable)
+        return;
+
+    m_bCollisionEnabled = enable;
+
+    if (!b3Body_IsValid(m_BodyId))
+        return;
+
+    b3Filter filter = b3DefaultFilter();
+    if (!enable)
+        filter.maskBits = 0;
+
+    ForEachShape(m_BodyId, [&](b3ShapeId shape) { b3Shape_SetFilter(shape, filter, true); });
 }
 
-void Box3DPhysicsObject::EnableDrag( bool enable )
+void Box3DPhysicsObject::EnableGravity(bool enable)
 {
-	m_bDragEnabled = enable;
+    m_bGravityEnabled = enable;
+    if (!m_bStatic)
+        b3Body_SetGravityScale(m_BodyId, enable ? 1.0f : 0.0f);
 }
 
-void Box3DPhysicsObject::EnableMotion( bool enable )
+void Box3DPhysicsObject::EnableDrag(bool enable)
 {
-	if ( m_bStatic || m_bMotionEnabled == enable )
-		return;
+    m_bDragEnabled = enable;
+}
 
-	m_bMotionEnabled = enable;
-	b3Body_SetType( m_BodyId, enable ? b3_dynamicBody : b3_staticBody );
-	if ( enable )
-	{
-		b3Body_ApplyMassFromShapes( m_BodyId );
-		b3Body_SetAwake( m_BodyId, true );
-	}
+void Box3DPhysicsObject::EnableMotion(bool enable)
+{
+    if (m_bStatic || m_bMotionEnabled == enable)
+        return;
+
+    m_bMotionEnabled = enable;
+    b3Body_SetType(m_BodyId, enable ? b3_dynamicBody : b3_staticBody);
+    if (enable)
+    {
+        b3Body_ApplyMassFromShapes(m_BodyId);
+        b3Body_SetAwake(m_BodyId, true);
+    }
 }
 
 //-------------------------------------------------------------------------------------------------
 
-void Box3DPhysicsObject::SetGameData( void *pGameData )				{ m_pGameData = pGameData; }
-void *Box3DPhysicsObject::GetGameData() const						{ return m_pGameData; }
-void Box3DPhysicsObject::SetGameFlags( unsigned short userFlags )	{ m_gameFlags = userFlags; }
-unsigned short Box3DPhysicsObject::GetGameFlags() const				{ return m_gameFlags; }
-void Box3DPhysicsObject::SetGameIndex( unsigned short gameIndex )	{ m_gameIndex = gameIndex; }
-unsigned short Box3DPhysicsObject::GetGameIndex() const				{ return m_gameIndex; }
-void Box3DPhysicsObject::SetCallbackFlags( unsigned short flags )	{ m_callbackFlags = flags; }
-unsigned short Box3DPhysicsObject::GetCallbackFlags() const			{ return m_callbackFlags; }
+void Box3DPhysicsObject::SetGameData(void* pGameData)
+{
+    m_pGameData = pGameData;
+}
+void* Box3DPhysicsObject::GetGameData() const
+{
+    return m_pGameData;
+}
+void Box3DPhysicsObject::SetGameFlags(unsigned short userFlags)
+{
+    m_gameFlags = userFlags;
+}
+unsigned short Box3DPhysicsObject::GetGameFlags() const
+{
+    return m_gameFlags;
+}
+void Box3DPhysicsObject::SetGameIndex(unsigned short gameIndex)
+{
+    m_gameIndex = gameIndex;
+}
+unsigned short Box3DPhysicsObject::GetGameIndex() const
+{
+    return m_gameIndex;
+}
+void Box3DPhysicsObject::SetCallbackFlags(unsigned short flags)
+{
+    m_callbackFlags = flags;
+}
+unsigned short Box3DPhysicsObject::GetCallbackFlags() const
+{
+    return m_callbackFlags;
+}
 
-void Box3DPhysicsObject::Wake()										{ if ( !m_bStatic ) b3Body_SetAwake( m_BodyId, true ); }
-void Box3DPhysicsObject::Sleep()									{ if ( !m_bStatic ) b3Body_SetAwake( m_BodyId, false ); }
-void Box3DPhysicsObject::RecheckCollisionFilter()					{ /* Not needed */  }
-void Box3DPhysicsObject::RecheckContactPoints( bool )				{ /* Not needed */ }
+void Box3DPhysicsObject::Wake()
+{
+    if (!m_bStatic)
+        b3Body_SetAwake(m_BodyId, true);
+}
+void Box3DPhysicsObject::Sleep()
+{
+    if (!m_bStatic)
+        b3Body_SetAwake(m_BodyId, false);
+}
+void Box3DPhysicsObject::RecheckCollisionFilter()
+{ /* Not needed */
+}
+void Box3DPhysicsObject::RecheckContactPoints(bool)
+{ /* Not needed */
+}
 
 //-------------------------------------------------------------------------------------------------
 
-void Box3DPhysicsObject::SetMass( float mass )
+void Box3DPhysicsObject::SetMass(float mass)
 {
-	mass = clamp( mass, 1.0f, VPHYSICS_MAX_MASS );
-	m_flCachedMass = mass;
-	m_flCachedInvMass = 1.0f / mass;
-	CalculateBuoyancy();
+    mass = clamp(mass, 1.0f, VPHYSICS_MAX_MASS);
+    m_flCachedMass = mass;
+    m_flCachedInvMass = 1.0f / mass;
+    CalculateBuoyancy();
 
-	if ( m_bStatic )
-		return;
+    if (m_bStatic)
+        return;
 
-	b3MassData massData = b3Body_GetMassData( m_BodyId );
-	const float scale = massData.mass > 0.0f ? mass / massData.mass : 1.0f;
-	massData.mass = mass;
-	massData.inertia.cx.x *= scale; massData.inertia.cx.y *= scale; massData.inertia.cx.z *= scale;
-	massData.inertia.cy.x *= scale; massData.inertia.cy.y *= scale; massData.inertia.cy.z *= scale;
-	massData.inertia.cz.x *= scale; massData.inertia.cz.y *= scale; massData.inertia.cz.z *= scale;
-	b3Body_SetMassData( m_BodyId, massData );
+    b3MassData massData = b3Body_GetMassData(m_BodyId);
+    const float scale = massData.mass > 0.0f ? mass / massData.mass : 1.0f;
+    massData.mass = mass;
+    massData.inertia.cx.x *= scale;
+    massData.inertia.cx.y *= scale;
+    massData.inertia.cx.z *= scale;
+    massData.inertia.cy.x *= scale;
+    massData.inertia.cy.y *= scale;
+    massData.inertia.cy.z *= scale;
+    massData.inertia.cz.x *= scale;
+    massData.inertia.cz.y *= scale;
+    massData.inertia.cz.z *= scale;
+    b3Body_SetMassData(m_BodyId, massData);
 }
 
-float Box3DPhysicsObject::GetMass() const		{ return m_flCachedMass; }
-float Box3DPhysicsObject::GetInvMass() const	{ return m_flCachedInvMass; }
+float Box3DPhysicsObject::GetMass() const
+{
+    return m_flCachedMass;
+}
+float Box3DPhysicsObject::GetInvMass() const
+{
+    return m_flCachedInvMass;
+}
 
 Vector Box3DPhysicsObject::GetInertia() const
 {
-	// IVP hands the game its raw kg m^2 diagonal (axis conversion only, no unit scaling); the game
-	// feeds these values straight back into SetInertia.
-	const b3Matrix3 inertia = b3Body_GetLocalRotationalInertia( m_BodyId );
-	return Vector( fabsf( inertia.cx.x ), fabsf( inertia.cy.y ), fabsf( inertia.cz.z ) );
+    // IVP hands the game its raw kg m^2 diagonal (axis conversion only, no unit scaling); the game
+    // feeds these values straight back into SetInertia.
+    const b3Matrix3 inertia = b3Body_GetLocalRotationalInertia(m_BodyId);
+    return Vector(fabsf(inertia.cx.x), fabsf(inertia.cy.y), fabsf(inertia.cz.z));
 }
 
 Vector Box3DPhysicsObject::GetInvInertia() const
 {
-	const Vector inertia = GetInertia();
-	return Vector(
-		inertia.x > 0.0f ? 1.0f / inertia.x : 0.0f,
-		inertia.y > 0.0f ? 1.0f / inertia.y : 0.0f,
-		inertia.z > 0.0f ? 1.0f / inertia.z : 0.0f );
+    const Vector inertia = GetInertia();
+    return Vector(
+        inertia.x > 0.0f ? 1.0f / inertia.x : 0.0f, inertia.y > 0.0f ? 1.0f / inertia.y : 0.0f,
+        inertia.z > 0.0f ? 1.0f / inertia.z : 0.0f);
 }
 
-void Box3DPhysicsObject::SetInertia( const Vector &inertia )
+void Box3DPhysicsObject::SetInertia(const Vector& inertia)
 {
-	if ( m_bStatic )
-		return;
+    if (m_bStatic)
+        return;
 
-	const Vector vecAbs = Vector( fabsf( inertia.x ), fabsf( inertia.y ), fabsf( inertia.z ) );
+    const Vector vecAbs = Vector(fabsf(inertia.x), fabsf(inertia.y), fabsf(inertia.z));
 
-	b3MassData massData = b3Body_GetMassData( m_BodyId );
-	massData.inertia = b3Matrix3{};
-	massData.inertia.cx.x = vecAbs.x;
-	massData.inertia.cy.y = vecAbs.y;
-	massData.inertia.cz.z = vecAbs.z;
-	b3Body_SetMassData( m_BodyId, massData );
+    b3MassData massData = b3Body_GetMassData(m_BodyId);
+    massData.inertia = b3Matrix3{};
+    massData.inertia.cx.x = vecAbs.x;
+    massData.inertia.cy.y = vecAbs.y;
+    massData.inertia.cz.z = vecAbs.z;
+    b3Body_SetMassData(m_BodyId, massData);
 }
 
-void Box3DPhysicsObject::SetDamping( const float *speed, const float *rot )
+void Box3DPhysicsObject::SetDamping(const float* speed, const float* rot)
 {
-	if ( speed ) { m_flLinearDamping = *speed; if ( !m_bStatic ) b3Body_SetLinearDamping( m_BodyId, *speed ); }
-	if ( rot )   { m_flAngularDamping = *rot;  if ( !m_bStatic ) b3Body_SetAngularDamping( m_BodyId, *rot ); }
+    if (speed)
+    {
+        m_flLinearDamping = *speed;
+        if (!m_bStatic)
+            b3Body_SetLinearDamping(m_BodyId, *speed);
+    }
+    if (rot)
+    {
+        m_flAngularDamping = *rot;
+        if (!m_bStatic)
+            b3Body_SetAngularDamping(m_BodyId, *rot);
+    }
 }
 
-void Box3DPhysicsObject::GetDamping( float *speed, float *rot ) const
+void Box3DPhysicsObject::GetDamping(float* speed, float* rot) const
 {
-	if ( speed ) *speed = m_flLinearDamping;
-	if ( rot )   *rot = m_flAngularDamping;
+    if (speed)
+        *speed = m_flLinearDamping;
+    if (rot)
+        *rot = m_flAngularDamping;
 }
 
-void Box3DPhysicsObject::SetDragCoefficient( float *, float * )	{}
-void Box3DPhysicsObject::SetBuoyancyRatio( float ratio )			{ m_flBuoyancyRatio = ratio; }
-
-int Box3DPhysicsObject::GetMaterialIndex() const				{ return m_materialIndex; }
-void Box3DPhysicsObject::SetMaterialIndex( int materialIndex )
+void Box3DPhysicsObject::SetDragCoefficient(float*, float*)
 {
-	if ( m_materialIndex == materialIndex )
-		return;
-
-	m_materialIndex = materialIndex;
-
-	surfacedata_t *pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData( materialIndex );
-	if ( pSurface )
-	{
-		m_flMaterialDensity = pSurface->physics.density;
-		CalculateBuoyancy();
-	}
-	if ( !pSurface || !b3Body_IsValid( m_BodyId ) )
-		return;
-
-	const float flFriction = Max( pSurface->physics.friction, 0.0f );
-	const float flRestitution = pSurface->physics.elasticity;
-	ForEachShape( m_BodyId, [ & ]( b3ShapeId shape )
-	{
-		b3Shape_SetFriction( shape, flFriction );
-		b3Shape_SetRestitution( shape, flRestitution );
-	} );
-
-	if ( m_pShadowController )
-		m_pShadowController->ObjectMaterialChanged( materialIndex );
 }
-unsigned int Box3DPhysicsObject::GetContents() const			{ return m_contents; }
-void Box3DPhysicsObject::SetContents( unsigned int contents )	{ m_contents = contents; }
+void Box3DPhysicsObject::SetBuoyancyRatio(float ratio)
+{
+    m_flBuoyancyRatio = ratio;
+}
 
-float Box3DPhysicsObject::GetSphereRadius() const				{ return m_flSphereRadius; }
-void Box3DPhysicsObject::SetSphereRadius( float radius )			{ m_flSphereRadius = radius; }
+int Box3DPhysicsObject::GetMaterialIndex() const
+{
+    return m_materialIndex;
+}
+void Box3DPhysicsObject::SetMaterialIndex(int materialIndex)
+{
+    if (m_materialIndex == materialIndex)
+        return;
+
+    m_materialIndex = materialIndex;
+
+    surfacedata_t* pSurface = Box3DPhysicsSurfaceProps::GetInstance().GetSurfaceData(materialIndex);
+    if (pSurface)
+    {
+        m_flMaterialDensity = pSurface->physics.density;
+        CalculateBuoyancy();
+    }
+    if (!pSurface || !b3Body_IsValid(m_BodyId))
+        return;
+
+    const float flFriction = Max(pSurface->physics.friction, 0.0f);
+    const float flRestitution = pSurface->physics.elasticity;
+    ForEachShape(m_BodyId, [&](b3ShapeId shape) {
+        b3Shape_SetFriction(shape, flFriction);
+        b3Shape_SetRestitution(shape, flRestitution);
+    });
+
+    if (m_pShadowController)
+        m_pShadowController->ObjectMaterialChanged(materialIndex);
+}
+unsigned int Box3DPhysicsObject::GetContents() const
+{
+    return m_contents;
+}
+void Box3DPhysicsObject::SetContents(unsigned int contents)
+{
+    m_contents = contents;
+}
+
+float Box3DPhysicsObject::GetSphereRadius() const
+{
+    return m_flSphereRadius;
+}
+void Box3DPhysicsObject::SetSphereRadius(float radius)
+{
+    m_flSphereRadius = radius;
+}
 float Box3DPhysicsObject::GetEnergy() const
 {
-	if ( m_bStatic )
-		return 0.0f;
+    if (m_bStatic)
+        return 0.0f;
 
-	// 1/2 mvv + 1/2 wIw, converted like IVP's ConvertEnergyToHL.
-	const b3Vec3 v = b3Body_GetLinearVelocity( m_BodyId );
-	const b3Vec3 w = b3InvRotateVector( b3Body_GetTransform( m_BodyId ).q, b3Body_GetAngularVelocity( m_BodyId ) );
-	const b3MassData massData = b3Body_GetMassData( m_BodyId );
+    // 1/2 mvv + 1/2 wIw, converted like IVP's ConvertEnergyToHL.
+    const b3Vec3 v = b3Body_GetLinearVelocity(m_BodyId);
+    const b3Vec3 w = b3InvRotateVector(b3Body_GetTransform(m_BodyId).q, b3Body_GetAngularVelocity(m_BodyId));
+    const b3MassData massData = b3Body_GetMassData(m_BodyId);
 
-	const b3Vec3 Iw = {
-		massData.inertia.cx.x * w.x + massData.inertia.cy.x * w.y + massData.inertia.cz.x * w.z,
-		massData.inertia.cx.y * w.x + massData.inertia.cy.y * w.y + massData.inertia.cz.y * w.z,
-		massData.inertia.cx.z * w.x + massData.inertia.cy.z * w.y + massData.inertia.cz.z * w.z };
+    const b3Vec3 Iw = { massData.inertia.cx.x * w.x + massData.inertia.cy.x * w.y + massData.inertia.cz.x * w.z,
+                        massData.inertia.cx.y * w.x + massData.inertia.cy.y * w.y + massData.inertia.cz.y * w.z,
+                        massData.inertia.cx.z * w.x + massData.inertia.cy.z * w.y + massData.inertia.cz.z * w.z };
 
-	return BoxToSource::Energy( 0.5f * massData.mass * b3Dot( v, v ) + 0.5f * b3Dot( w, Iw ) );
+    return BoxToSource::Energy(0.5f * massData.mass * b3Dot(v, v) + 0.5f * b3Dot(w, Iw));
 }
 
 Vector Box3DPhysicsObject::GetMassCenterLocalSpace() const
 {
-	return BoxToSource::Distance( b3Body_GetLocalCenterOfMass( m_BodyId ) );
+    return BoxToSource::Distance(b3Body_GetLocalCenterOfMass(m_BodyId));
 }
 
 //-------------------------------------------------------------------------------------------------
 
-void Box3DPhysicsObject::SetPosition( const Vector &worldPosition, const QAngle &angles, bool )
+void Box3DPhysicsObject::SetPosition(const Vector& worldPosition, const QAngle& angles, bool)
 {
-	b3Body_SetTransform( m_BodyId, SourceToBox::Distance( worldPosition ), SourceToBox::Angle( angles ) );
+    b3Body_SetTransform(m_BodyId, SourceToBox::Distance(worldPosition), SourceToBox::Angle(angles));
 }
 
-void Box3DPhysicsObject::SetPositionMatrix( const matrix3x4_t &matrix, bool )
+void Box3DPhysicsObject::SetPositionMatrix(const matrix3x4_t& matrix, bool)
 {
-	const b3Transform xf = SourceToBox::Transform( matrix );
-	b3Body_SetTransform( m_BodyId, xf.p, xf.q );
+    const b3Transform xf = SourceToBox::Transform(matrix);
+    b3Body_SetTransform(m_BodyId, xf.p, xf.q);
 }
 
-void Box3DPhysicsObject::GetPosition( Vector *worldPosition, QAngle *angles ) const
+void Box3DPhysicsObject::GetPosition(Vector* worldPosition, QAngle* angles) const
 {
-	const b3WorldTransform xf = b3Body_GetTransform( m_BodyId );
-	if ( worldPosition ) *worldPosition = BoxToSource::Distance( xf.p );
-	if ( angles )        *angles = BoxToSource::Angle( xf.q );
+    const b3WorldTransform xf = b3Body_GetTransform(m_BodyId);
+    if (worldPosition)
+        *worldPosition = BoxToSource::Distance(xf.p);
+    if (angles)
+        *angles = BoxToSource::Angle(xf.q);
 }
 
-void Box3DPhysicsObject::GetPositionMatrix( matrix3x4_t *positionMatrix ) const
+void Box3DPhysicsObject::GetPositionMatrix(matrix3x4_t* positionMatrix) const
 {
-	if ( positionMatrix )
-		*positionMatrix = BoxToSource::Matrix( b3Body_GetTransform( m_BodyId ) );
+    if (positionMatrix)
+        *positionMatrix = BoxToSource::Matrix(b3Body_GetTransform(m_BodyId));
 }
 
-void Box3DPhysicsObject::SetVelocity( const Vector *velocity, const AngularImpulse *angularVelocity )
+void Box3DPhysicsObject::SetVelocity(const Vector* velocity, const AngularImpulse* angularVelocity)
 {
-	if ( m_bStatic )
-		return;
-	// Never feed NaN/Inf into the solver — a bad velocity propagates to a bad position and the engine
-	// deletes the entity.
-	const bool bVel = velocity && velocity->IsValid();
-	const bool bAng = angularVelocity && angularVelocity->IsValid();
-	if ( bVel ) b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( *velocity ) );
-	if ( bAng )
-	{
-		Vector vecWorldAngular;
-		LocalToWorldVector( &vecWorldAngular, *angularVelocity );
-		b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( vecWorldAngular ) );
-	}
-	if ( bVel || bAng ) b3Body_SetAwake( m_BodyId, true );
+    if (m_bStatic)
+        return;
+    // Never feed NaN/Inf into the solver — a bad velocity propagates to a bad position and the engine
+    // deletes the entity.
+    const bool bVel = velocity && velocity->IsValid();
+    const bool bAng = angularVelocity && angularVelocity->IsValid();
+    if (bVel)
+        b3Body_SetLinearVelocity(m_BodyId, SourceToBox::Distance(*velocity));
+    if (bAng)
+    {
+        Vector vecWorldAngular;
+        LocalToWorldVector(&vecWorldAngular, *angularVelocity);
+        b3Body_SetAngularVelocity(m_BodyId, SourceToBox::AngularImpulse(vecWorldAngular));
+    }
+    if (bVel || bAng)
+        b3Body_SetAwake(m_BodyId, true);
 }
 
-void Box3DPhysicsObject::SetVelocityInstantaneous( const Vector *velocity, const AngularImpulse *angularVelocity )
+void Box3DPhysicsObject::SetVelocityInstantaneous(const Vector* velocity, const AngularImpulse* angularVelocity)
 {
-	SetVelocity( velocity, angularVelocity );
+    SetVelocity(velocity, angularVelocity);
 }
 
-void Box3DPhysicsObject::GetVelocity( Vector *velocity, AngularImpulse *angularVelocity ) const
+void Box3DPhysicsObject::GetVelocity(Vector* velocity, AngularImpulse* angularVelocity) const
 {
-	// Never hand the game a NaN/Inf: it fails the entity's IsValid check and deletes it.
-	if ( velocity )
-	{
-		*velocity = BoxToSource::Distance( b3Body_GetLinearVelocity( m_BodyId ) );
-		if ( !velocity->IsValid() )
-			*velocity = vec3_origin;
-	}
-	if ( angularVelocity )
-	{
-		// Explosion gibs get extreme spin; IVP clamps the core to PI/2 rad/tick and the game reads that
-		// clamped value. Clamp here (where the game reads) to the same per-tick limit the step used, and
-		// write it back so the body stays sane too.
-		const float flMaxAngular = m_pEnvironment->GetMaxAngularVelocity();
-		b3Vec3 w = b3Body_GetAngularVelocity( m_BodyId );
-		const float flLen = sqrtf( b3Dot( w, w ) );
-		if ( flLen > flMaxAngular )
-		{
-			w = b3MulSV( flMaxAngular / flLen, w );
-			if ( !m_bStatic )
-				b3Body_SetAngularVelocity( m_BodyId, w );
-		}
-		// The interface's angular velocity is in object space (IVP's core frame).
-		const Vector vecWorldAngular = BoxToSource::AngularImpulse( w );
-		WorldToLocalVector( angularVelocity, vecWorldAngular );
-		if ( !angularVelocity->IsValid() )
-			*angularVelocity = vec3_origin;
-	}
+    // Never hand the game a NaN/Inf: it fails the entity's IsValid check and deletes it.
+    if (velocity)
+    {
+        *velocity = BoxToSource::Distance(b3Body_GetLinearVelocity(m_BodyId));
+        if (!velocity->IsValid())
+            *velocity = vec3_origin;
+    }
+    if (angularVelocity)
+    {
+        // Explosion gibs get extreme spin; IVP clamps the core to PI/2 rad/tick and the game reads that
+        // clamped value. Clamp here (where the game reads) to the same per-tick limit the step used, and
+        // write it back so the body stays sane too.
+        const float flMaxAngular = m_pEnvironment->GetMaxAngularVelocity();
+        b3Vec3 w = b3Body_GetAngularVelocity(m_BodyId);
+        const float flLen = sqrtf(b3Dot(w, w));
+        if (flLen > flMaxAngular)
+        {
+            w = b3MulSV(flMaxAngular / flLen, w);
+            if (!m_bStatic)
+                b3Body_SetAngularVelocity(m_BodyId, w);
+        }
+        // The interface's angular velocity is in object space (IVP's core frame).
+        const Vector vecWorldAngular = BoxToSource::AngularImpulse(w);
+        WorldToLocalVector(angularVelocity, vecWorldAngular);
+        if (!angularVelocity->IsValid())
+            *angularVelocity = vec3_origin;
+    }
 }
 
 void Box3DPhysicsObject::SnapshotPreStepVelocity()
 {
-	m_vecPreStepVelocity = m_bStatic ? vec3_origin : BoxToSource::Distance( b3Body_GetLinearVelocity( m_BodyId ) );
+    m_vecPreStepVelocity = m_bStatic ? vec3_origin : BoxToSource::Distance(b3Body_GetLinearVelocity(m_BodyId));
 }
 
-Vector Box3DPhysicsObject::FakeVelocity( const Vector &vecVelocity )
+Vector Box3DPhysicsObject::FakeVelocity(const Vector& vecVelocity)
 {
-	const Vector vecOld = BoxToSource::Distance( b3Body_GetLinearVelocity( m_BodyId ) );
-	if ( !m_bStatic )
-		b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( vecVelocity ) );
-	return vecOld;
+    const Vector vecOld = BoxToSource::Distance(b3Body_GetLinearVelocity(m_BodyId));
+    if (!m_bStatic)
+        b3Body_SetLinearVelocity(m_BodyId, SourceToBox::Distance(vecVelocity));
+    return vecOld;
 }
 
-void Box3DPhysicsObject::RestoreVelocity( const Vector &vecVelocity )
+void Box3DPhysicsObject::RestoreVelocity(const Vector& vecVelocity)
 {
-	if ( !m_bStatic )
-		b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( vecVelocity ) );
+    if (!m_bStatic)
+        b3Body_SetLinearVelocity(m_BodyId, SourceToBox::Distance(vecVelocity));
 }
 
-void Box3DPhysicsObject::AddVelocity( const Vector *velocity, const AngularImpulse *angularVelocity )
+void Box3DPhysicsObject::AddVelocity(const Vector* velocity, const AngularImpulse* angularVelocity)
 {
-	if ( m_bStatic )
-		return;
-	if ( velocity )        b3Body_SetLinearVelocity( m_BodyId, b3Add( b3Body_GetLinearVelocity( m_BodyId ), SourceToBox::Distance( *velocity ) ) );
-	if ( angularVelocity )
-	{
-		Vector vecWorldAngular;
-		LocalToWorldVector( &vecWorldAngular, *angularVelocity );
-		b3Body_SetAngularVelocity( m_BodyId, b3Add( b3Body_GetAngularVelocity( m_BodyId ), SourceToBox::AngularImpulse( vecWorldAngular ) ) );
-	}
-	if ( velocity || angularVelocity ) b3Body_SetAwake( m_BodyId, true );
+    if (m_bStatic)
+        return;
+    if (velocity)
+        b3Body_SetLinearVelocity(m_BodyId, b3Add(b3Body_GetLinearVelocity(m_BodyId), SourceToBox::Distance(*velocity)));
+    if (angularVelocity)
+    {
+        Vector vecWorldAngular;
+        LocalToWorldVector(&vecWorldAngular, *angularVelocity);
+        b3Body_SetAngularVelocity(
+            m_BodyId, b3Add(b3Body_GetAngularVelocity(m_BodyId), SourceToBox::AngularImpulse(vecWorldAngular)));
+    }
+    if (velocity || angularVelocity)
+        b3Body_SetAwake(m_BodyId, true);
 }
 
-void Box3DPhysicsObject::GetVelocityAtPoint( const Vector &worldPosition, Vector *pVelocity ) const
+void Box3DPhysicsObject::GetVelocityAtPoint(const Vector& worldPosition, Vector* pVelocity) const
 {
-	if ( pVelocity )
-		*pVelocity = BoxToSource::Distance( b3Body_GetWorldPointVelocity( m_BodyId, SourceToBox::Distance( worldPosition ) ) );
+    if (pVelocity)
+        *pVelocity = BoxToSource::Distance(b3Body_GetWorldPointVelocity(m_BodyId, SourceToBox::Distance(worldPosition)));
 }
 
-void Box3DPhysicsObject::GetImplicitVelocity( Vector *velocity, AngularImpulse *angularVelocity ) const
+void Box3DPhysicsObject::GetImplicitVelocity(Vector* velocity, AngularImpulse* angularVelocity) const
 {
-	GetVelocity( velocity, angularVelocity );
+    GetVelocity(velocity, angularVelocity);
 }
 
-void Box3DPhysicsObject::LocalToWorld( Vector *worldPosition, const Vector &localPosition ) const
+void Box3DPhysicsObject::LocalToWorld(Vector* worldPosition, const Vector& localPosition) const
 {
-	if ( worldPosition )
-		*worldPosition = BoxToSource::Distance( b3Body_GetWorldPoint( m_BodyId, SourceToBox::Distance( localPosition ) ) );
+    if (worldPosition)
+        *worldPosition = BoxToSource::Distance(b3Body_GetWorldPoint(m_BodyId, SourceToBox::Distance(localPosition)));
 }
 
-void Box3DPhysicsObject::WorldToLocal( Vector *localPosition, const Vector &worldPosition ) const
+void Box3DPhysicsObject::WorldToLocal(Vector* localPosition, const Vector& worldPosition) const
 {
-	if ( localPosition )
-		*localPosition = BoxToSource::Distance( b3Body_GetLocalPoint( m_BodyId, SourceToBox::Distance( worldPosition ) ) );
+    if (localPosition)
+        *localPosition = BoxToSource::Distance(b3Body_GetLocalPoint(m_BodyId, SourceToBox::Distance(worldPosition)));
 }
 
-void Box3DPhysicsObject::LocalToWorldVector( Vector *worldVector, const Vector &localVector ) const
+void Box3DPhysicsObject::LocalToWorldVector(Vector* worldVector, const Vector& localVector) const
 {
-	if ( worldVector )
-		*worldVector = BoxToSource::Unitless( b3Body_GetWorldVector( m_BodyId, SourceToBox::Unitless( localVector ) ) );
+    if (worldVector)
+        *worldVector = BoxToSource::Unitless(b3Body_GetWorldVector(m_BodyId, SourceToBox::Unitless(localVector)));
 }
 
-void Box3DPhysicsObject::WorldToLocalVector( Vector *localVector, const Vector &worldVector ) const
+void Box3DPhysicsObject::WorldToLocalVector(Vector* localVector, const Vector& worldVector) const
 {
-	if ( localVector )
-		*localVector = BoxToSource::Unitless( b3Body_GetLocalVector( m_BodyId, SourceToBox::Unitless( worldVector ) ) );
+    if (localVector)
+        *localVector = BoxToSource::Unitless(b3Body_GetLocalVector(m_BodyId, SourceToBox::Unitless(worldVector)));
 }
 
 //-------------------------------------------------------------------------------------------------
 
-void Box3DPhysicsObject::ApplyForceCenter( const Vector &forceVector )
+void Box3DPhysicsObject::ApplyForceCenter(const Vector& forceVector)
 {
-	if ( !m_bStatic )
-		b3Body_ApplyLinearImpulseToCenter( m_BodyId, SourceToBox::Distance( forceVector ), true );
+    if (!m_bStatic)
+        b3Body_ApplyLinearImpulseToCenter(m_BodyId, SourceToBox::Distance(forceVector), true);
 }
 
-void Box3DPhysicsObject::ApplyForceOffset( const Vector &forceVector, const Vector &worldPosition )
+void Box3DPhysicsObject::ApplyForceOffset(const Vector& forceVector, const Vector& worldPosition)
 {
-	if ( !m_bStatic )
-		b3Body_ApplyLinearImpulse( m_BodyId, SourceToBox::Distance( forceVector ), SourceToBox::Distance( worldPosition ), true );
+    if (!m_bStatic)
+        b3Body_ApplyLinearImpulse(m_BodyId, SourceToBox::Distance(forceVector), SourceToBox::Distance(worldPosition), true);
 }
 
-void Box3DPhysicsObject::ApplyTorqueCenter( const AngularImpulse &torque )
+void Box3DPhysicsObject::ApplyTorqueCenter(const AngularImpulse& torque)
 {
-	if ( m_bStatic )
-		return;
+    if (m_bStatic)
+        return;
 
-	// IVP applies this torque impulse in world space (async_rot_push_core_multiple_ws).
-	b3Body_ApplyAngularImpulse( m_BodyId, SourceToBox::AngularImpulse( torque ), true );
+    // IVP applies this torque impulse in world space (async_rot_push_core_multiple_ws).
+    b3Body_ApplyAngularImpulse(m_BodyId, SourceToBox::AngularImpulse(torque), true);
 }
 
-void Box3DPhysicsObject::CalculateForceOffset( const Vector &forceVector, const Vector &worldPosition, Vector *centerForce, AngularImpulse *centerTorque ) const
+void Box3DPhysicsObject::CalculateForceOffset(
+    const Vector& forceVector, const Vector& worldPosition, Vector* centerForce, AngularImpulse* centerTorque) const
 {
-	if ( centerForce ) *centerForce = forceVector;
-	if ( centerTorque )
-	{
-		Vector com;
-		com = BoxToSource::Distance( b3Body_GetWorldCenterOfMass( m_BodyId ) );
-		const Vector worldTorque = CrossProduct( worldPosition - com, forceVector );
-		WorldToLocalVector( centerTorque, worldTorque );
-	}
+    if (centerForce)
+        *centerForce = forceVector;
+    if (centerTorque)
+    {
+        Vector com;
+        com = BoxToSource::Distance(b3Body_GetWorldCenterOfMass(m_BodyId));
+        const Vector worldTorque = CrossProduct(worldPosition - com, forceVector);
+        WorldToLocalVector(centerTorque, worldTorque);
+    }
 }
 
-void Box3DPhysicsObject::CalculateVelocityOffset( const Vector &forceVector, const Vector &worldPosition, Vector *centerVelocity, AngularImpulse *centerAngularVelocity ) const
+void Box3DPhysicsObject::CalculateVelocityOffset(
+    const Vector& forceVector, const Vector& worldPosition, Vector* centerVelocity, AngularImpulse* centerAngularVelocity) const
 {
-	if ( centerVelocity )        *centerVelocity = forceVector * GetInvMass();
-	if ( centerAngularVelocity )
-	{
-		Vector centerTorque;
-		CalculateForceOffset( forceVector, worldPosition, nullptr, &centerTorque );
-		const Vector invInertia = GetInvInertia();
-		*centerAngularVelocity = Vector( centerTorque.x * invInertia.x, centerTorque.y * invInertia.y, centerTorque.z * invInertia.z );
-	}
+    if (centerVelocity)
+        *centerVelocity = forceVector * GetInvMass();
+    if (centerAngularVelocity)
+    {
+        Vector centerTorque;
+        CalculateForceOffset(forceVector, worldPosition, nullptr, &centerTorque);
+        const Vector invInertia = GetInvInertia();
+        *centerAngularVelocity = Vector(
+            centerTorque.x * invInertia.x, centerTorque.y * invInertia.y, centerTorque.z * invInertia.z);
+    }
 }
 
-float Box3DPhysicsObject::CalculateLinearDrag( const Vector & ) const	{ return 0.0f; }
-float Box3DPhysicsObject::CalculateAngularDrag( const Vector & ) const	{ return 0.0f; }
+float Box3DPhysicsObject::CalculateLinearDrag(const Vector&) const
+{
+    return 0.0f;
+}
+float Box3DPhysicsObject::CalculateAngularDrag(const Vector&) const
+{
+    return 0.0f;
+}
 
-bool Box3DPhysicsObject::GetContactPoint( Vector *, IPhysicsObject ** ) const { return false; }
+bool Box3DPhysicsObject::GetContactPoint(Vector*, IPhysicsObject**) const
+{
+    return false;
+}
 
 //-------------------------------------------------------------------------------------------------
 
-void Box3DPhysicsObject::SetShadow( float maxSpeed, float maxAngularSpeed, bool allowPhysicsMovement, bool allowPhysicsRotation )
+void Box3DPhysicsObject::SetShadow(float maxSpeed, float maxAngularSpeed, bool allowPhysicsMovement, bool allowPhysicsRotation)
 {
-	if ( !m_pShadowController )
-		m_pShadowController = static_cast< Box3DPhysicsShadowController * >(
-			m_pEnvironment->CreateShadowController( this, allowPhysicsMovement, allowPhysicsRotation ) );
-	m_pShadowController->MaxSpeed( maxSpeed, maxAngularSpeed );
+    if (!m_pShadowController)
+        m_pShadowController = static_cast<Box3DPhysicsShadowController*>(
+            m_pEnvironment->CreateShadowController(this, allowPhysicsMovement, allowPhysicsRotation));
+    m_pShadowController->MaxSpeed(maxSpeed, maxAngularSpeed);
 }
 
-void Box3DPhysicsObject::UpdateShadow( const Vector &targetPosition, const QAngle &targetAngles, bool tempDisableGravity, float timeOffset )
+void Box3DPhysicsObject::UpdateShadow(
+    const Vector& targetPosition, const QAngle& targetAngles, bool tempDisableGravity, float timeOffset)
 {
-	if ( m_pShadowController )
-		m_pShadowController->Update( targetPosition, targetAngles, timeOffset );
+    if (m_pShadowController)
+        m_pShadowController->Update(targetPosition, targetAngles, timeOffset);
 }
 
-int Box3DPhysicsObject::GetShadowPosition( Vector *position, QAngle *angles ) const	{ GetPosition( position, angles ); return 1; }
-IPhysicsShadowController *Box3DPhysicsObject::GetShadowController() const		{ return m_pShadowController; }
+int Box3DPhysicsObject::GetShadowPosition(Vector* position, QAngle* angles) const
+{
+    GetPosition(position, angles);
+    return 1;
+}
+IPhysicsShadowController* Box3DPhysicsObject::GetShadowController() const
+{
+    return m_pShadowController;
+}
 
 void Box3DPhysicsObject::RemoveShadowController()
 {
-	if ( m_pShadowController )
-	{
-		m_pEnvironment->DestroyShadowController( m_pShadowController );
-		m_pShadowController = nullptr;
-	}
+    if (m_pShadowController)
+    {
+        m_pEnvironment->DestroyShadowController(m_pShadowController);
+        m_pShadowController = nullptr;
+    }
 }
 
 // The engine's grab/shadow (physgun, +use pickup, doors) drives a held object toward a target through
@@ -553,118 +726,163 @@ void Box3DPhysicsObject::RemoveShadowController()
 // can't fully cancel a hard-set velocity aimed at a contact under sustained drive, so without this the
 // physgun/carry can force the held object through walls. Only static blockers are clamped, so pushing
 // or lifting dynamic objects still works.
-static void ClampShadowVelocityAgainstContacts( const Box3DPhysicsObject *pSelf, b3BodyId bodyId, Vector &velocity )
+static void ClampShadowVelocityAgainstContacts(const Box3DPhysicsObject* pSelf, b3BodyId bodyId, Vector& velocity)
 {
-	if ( velocity == vec3_origin )
-		return;
+    if (velocity == vec3_origin)
+        return;
 
-	b3ContactData contacts[ 16 ];
-	const int nCount = b3Body_GetContactData( bodyId, contacts, 16 );
-	for ( int i = 0; i < nCount; i++ )
-	{
-		Box3DPhysicsObject *pA = static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( contacts[ i ].shapeIdA ) ) );
-		const bool bSelfIsA = ( pA == pSelf );
-		Box3DPhysicsObject *pOther = bSelfIsA
-			? static_cast< Box3DPhysicsObject * >( b3Body_GetUserData( b3Shape_GetBody( contacts[ i ].shapeIdB ) ) )
-			: pA;
-		if ( !pOther || !pOther->IsStatic() )
-			continue;
+    b3ContactData contacts[16];
+    const int nCount = b3Body_GetContactData(bodyId, contacts, 16);
+    for (int i = 0; i < nCount; i++)
+    {
+        Box3DPhysicsObject* pA = static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(contacts[i].shapeIdA)));
+        const bool bSelfIsA = (pA == pSelf);
+        Box3DPhysicsObject* pOther = bSelfIsA
+            ? static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(contacts[i].shapeIdB)))
+            : pA;
+        if (!pOther || !pOther->IsStatic())
+            continue;
 
-		for ( int j = 0; j < contacts[ i ].manifoldCount; j++ )
-		{
-			const b3Manifold &manifold = contacts[ i ].manifolds[ j ];
-			if ( manifold.pointCount <= 0 )
-				continue;
+        for (int j = 0; j < contacts[i].manifoldCount; j++)
+        {
+            const b3Manifold& manifold = contacts[i].manifolds[j];
+            if (manifold.pointCount <= 0)
+                continue;
 
-			// Manifold normal points A -> B; orient it from the shadow object into the blocker.
-			Vector vNormal = BoxToSource::Unitless( manifold.normal );
-			if ( !bSelfIsA )
-				vNormal = -vNormal;
+            // Manifold normal points A -> B; orient it from the shadow object into the blocker.
+            Vector vNormal = BoxToSource::Unitless(manifold.normal);
+            if (!bSelfIsA)
+                vNormal = -vNormal;
 
-			const float flInto = DotProduct( velocity, vNormal );
-			if ( flInto > 0.0f )
-				velocity -= vNormal * flInto;
-		}
-	}
+            const float flInto = DotProduct(velocity, vNormal);
+            if (flInto > 0.0f)
+                velocity -= vNormal * flInto;
+        }
+    }
 }
 
-float Box3DPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &params, float flSecondsToArrival, float flDeltaTime )
+float Box3DPhysicsObject::ComputeShadowControl(
+    const hlshadowcontrol_params_t& params, float flSecondsToArrival, float flDeltaTime)
 {
-	Vector position;
-	QAngle angles;
-	GetPosition( &position, &angles );
+    Vector position;
+    QAngle angles;
+    GetPosition(&position, &angles);
 
-	// The servo math below runs in world space; use raw body velocities rather than the
-	// interface's object-space angular values.
-	Vector linearVelocity = BoxToSource::Distance( b3Body_GetLinearVelocity( m_BodyId ) );
-	AngularImpulse angularVelocity = BoxToSource::AngularImpulse( b3Body_GetAngularVelocity( m_BodyId ) );
+    // The servo math below runs in world space; use raw body velocities rather than the
+    // interface's object-space angular values.
+    Vector linearVelocity = BoxToSource::Distance(b3Body_GetLinearVelocity(m_BodyId));
+    AngularImpulse angularVelocity = BoxToSource::AngularImpulse(b3Body_GetAngularVelocity(m_BodyId));
 
-	const float flFraction = flSecondsToArrival > 0.0f ? Min( flDeltaTime / flSecondsToArrival, 1.0f ) : 1.0f;
-	flSecondsToArrival = Max( flSecondsToArrival - flDeltaTime, 0.0f );
+    const float flFraction = flSecondsToArrival > 0.0f ? Min(flDeltaTime / flSecondsToArrival, 1.0f) : 1.0f;
+    flSecondsToArrival = Max(flSecondsToArrival - flDeltaTime, 0.0f);
 
-	if ( flFraction <= 0.0f )
-		return flSecondsToArrival;
+    if (flFraction <= 0.0f)
+        return flSecondsToArrival;
 
-	Vector deltaPosition = params.targetPosition - position;
+    Vector deltaPosition = params.targetPosition - position;
 
-	bool bTeleport = false;
-	if ( params.teleportDistance > 0.0f && deltaPosition.LengthSqr() > Square( params.teleportDistance ) )
-	{
-		position = params.targetPosition;
-		angles = params.targetRotation;
-		deltaPosition = vec3_origin;
-		bTeleport = true;
-	}
+    bool bTeleport = false;
+    if (params.teleportDistance > 0.0f && deltaPosition.LengthSqr() > Square(params.teleportDistance))
+    {
+        position = params.targetPosition;
+        angles = params.targetRotation;
+        deltaPosition = vec3_origin;
+        bTeleport = true;
+    }
 
-	const float flFractionTime = flFraction / flDeltaTime;
+    const float flFractionTime = flFraction / flDeltaTime;
 
-	ShadowComputeVelocity( linearVelocity, deltaPosition, params.maxSpeed, params.maxDampSpeed, flFractionTime, params.dampFactor );
+    ShadowComputeVelocity(
+        linearVelocity, deltaPosition, params.maxSpeed, params.maxDampSpeed, flFractionTime, params.dampFactor);
 
-	const Vector deltaAngles = ShadowRotationDeltaDegrees( angles, params.targetRotation );
-	ShadowComputeVelocity( angularVelocity, deltaAngles, params.maxAngular, params.maxDampAngular, flFractionTime, params.dampFactor );
+    const Vector deltaAngles = ShadowRotationDeltaDegrees(angles, params.targetRotation);
+    ShadowComputeVelocity(
+        angularVelocity, deltaAngles, params.maxAngular, params.maxDampAngular, flFractionTime, params.dampFactor);
 
-	if ( bTeleport )
-	{
-		if ( IsCollisionEnabled() )
-		{
-			EnableCollisions( false );
-			SetPosition( position, angles, true );
-			EnableCollisions( true );
-		}
-		else
-		{
-			SetPosition( position, angles, true );
-		}
-	}
+    if (bTeleport)
+    {
+        if (IsCollisionEnabled())
+        {
+            EnableCollisions(false);
+            SetPosition(position, angles, true);
+            EnableCollisions(true);
+        }
+        else
+        {
+            SetPosition(position, angles, true);
+        }
+    }
 
-	if ( !m_bStatic )
-	{
-		ClampShadowVelocityAgainstContacts( this, m_BodyId, linearVelocity );
-		b3Body_SetLinearVelocity( m_BodyId, SourceToBox::Distance( linearVelocity ) );
-		b3Body_SetAngularVelocity( m_BodyId, SourceToBox::AngularImpulse( angularVelocity ) );
-		b3Body_SetAwake( m_BodyId, true );
-	}
+    if (!m_bStatic)
+    {
+        ClampShadowVelocityAgainstContacts(this, m_BodyId, linearVelocity);
+        b3Body_SetLinearVelocity(m_BodyId, SourceToBox::Distance(linearVelocity));
+        b3Body_SetAngularVelocity(m_BodyId, SourceToBox::AngularImpulse(angularVelocity));
+        b3Body_SetAwake(m_BodyId, true);
+    }
 
-	return flSecondsToArrival;
+    return flSecondsToArrival;
 }
 
-const CPhysCollide *Box3DPhysicsObject::GetCollide() const	{ return m_pCollide; }
-const char *Box3DPhysicsObject::GetName() const				{ return m_pName; }
+const CPhysCollide* Box3DPhysicsObject::GetCollide() const
+{
+    return m_pCollide;
+}
+const char* Box3DPhysicsObject::GetName() const
+{
+    return m_pName;
+}
 
 // A trigger (e.g. water) is non-solid: drop collision response so bodies pass through and queries find them.
-void Box3DPhysicsObject::BecomeTrigger()					{ m_bTrigger = true; EnableCollisions( false ); }
-void Box3DPhysicsObject::RemoveTrigger()					{ m_bTrigger = false; EnableCollisions( true ); }
-void Box3DPhysicsObject::BecomeHinged( int )				{ Log_Stub( LOG_VBox3D ); }
-void Box3DPhysicsObject::RemoveHinged()						{ Log_Stub( LOG_VBox3D ); }
+void Box3DPhysicsObject::BecomeTrigger()
+{
+    m_bTrigger = true;
+    EnableCollisions(false);
+}
+void Box3DPhysicsObject::RemoveTrigger()
+{
+    m_bTrigger = false;
+    EnableCollisions(true);
+}
+void Box3DPhysicsObject::BecomeHinged(int)
+{
+    Log_Stub(LOG_VBox3D);
+}
+void Box3DPhysicsObject::RemoveHinged()
+{
+    Log_Stub(LOG_VBox3D);
+}
 
-IPhysicsFrictionSnapshot *Box3DPhysicsObject::CreateFrictionSnapshot()		{ return new Box3DDummyFrictionSnapshot; }
-void Box3DPhysicsObject::DestroyFrictionSnapshot( IPhysicsFrictionSnapshot *pSnapshot ) { delete static_cast< Box3DDummyFrictionSnapshot * >( pSnapshot ); }
+IPhysicsFrictionSnapshot* Box3DPhysicsObject::CreateFrictionSnapshot()
+{
+    return new Box3DDummyFrictionSnapshot;
+}
+void Box3DPhysicsObject::DestroyFrictionSnapshot(IPhysicsFrictionSnapshot* pSnapshot)
+{
+    delete static_cast<Box3DDummyFrictionSnapshot*>(pSnapshot);
+}
 
-void Box3DPhysicsObject::OutputDebugInfo() const			{ Log_Stub( LOG_VBox3D ); }
+void Box3DPhysicsObject::OutputDebugInfo() const
+{
+    Log_Stub(LOG_VBox3D);
+}
 
-void Box3DPhysicsObject::SetUseAlternateGravity( bool )		{}
-void Box3DPhysicsObject::SetCollisionHints( uint32 collisionHints ) { m_collisionHints = collisionHints; }
-uint32 Box3DPhysicsObject::GetCollisionHints() const		{ return m_collisionHints; }
+void Box3DPhysicsObject::SetUseAlternateGravity(bool)
+{
+}
+void Box3DPhysicsObject::SetCollisionHints(uint32 collisionHints)
+{
+    m_collisionHints = collisionHints;
+}
+uint32 Box3DPhysicsObject::GetCollisionHints() const
+{
+    return m_collisionHints;
+}
 
-IPredictedPhysicsObject *Box3DPhysicsObject::GetPredictedInterface() const	{ return nullptr; }
-void Box3DPhysicsObject::SyncWith( IPhysicsObject * )						{}
+IPredictedPhysicsObject* Box3DPhysicsObject::GetPredictedInterface() const
+{
+    return nullptr;
+}
+void Box3DPhysicsObject::SyncWith(IPhysicsObject*)
+{
+}

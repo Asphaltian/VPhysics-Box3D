@@ -24,7 +24,7 @@ static uint64 s_nNextUniqueId = 1;
 
 // Cap game-set inertia to this multiple of Box3D's native value; IVP's raw inertia destabilizes ragdolls.
 static ConVar vbox_inertia_scale(
-    "vbox_inertia_scale", "2", FCVAR_NONE, "Max multiple of Box3D's native inertia a SetInertia may apply.", true, 0.0f, true,
+    "vbox_inertia_scale", "1", FCVAR_NONE, "Max multiple of Box3D's native inertia a SetInertia may apply.", true, 0.0f, true,
     1000.0f);
 
 namespace
@@ -252,7 +252,11 @@ void Box3DPhysicsObject::Sleep()
         b3Body_SetAwake(m_BodyId, false);
 }
 void Box3DPhysicsObject::RecheckCollisionFilter()
-{ /* Not needed */
+{
+    // Collision rules changed: stale this object's cached decisions. Bumping the epoch invalidates entries
+    // naming it as a partner; the clear drops the ones it owns. Outside the step, so no lock needed.
+    ++m_nRulesEpoch;
+    m_CollisionCache.clear();
 }
 void Box3DPhysicsObject::RecheckContactPoints(bool)
 { /* Not needed */

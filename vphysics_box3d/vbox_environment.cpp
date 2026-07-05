@@ -19,6 +19,8 @@
 #include "vbox_object.h"
 #include "vbox_surfaceprops.h"
 
+#include <atomic>
+
 static ConVar vbox_substeps("vbox_substeps", "16", FCVAR_NONE, "Solver substeps per physics step.", true, 1.0f, true, 1024.0f);
 static ConVar vbox_contact_hertz(
     "vbox_contact_hertz", "240", FCVAR_NONE, "Contact stiffness in Hz. Lower is softer/smushier.", true, 1.0f, true, 480.0f);
@@ -59,41 +61,119 @@ namespace
         return clamp(a * b, 0.0f, 1.0f);
     }
 
-    // These callbacks run on Box3D worker threads; the game's solver isn't thread-safe.
-    CThreadFastMutex g_CollisionSolverMutex;
-
-    // Ask the game's solver whether two shapes' objects may collide (collision groups, no-collide, debris).
-    bool ShapesCollide(void* context, b3ShapeId shapeA, b3ShapeId shapeB)
+    // Self-contained reader-writer spinlock. tier0's CThreadSpinRWLock would've been used but its 64-bit Windows ctor is
+    // out-of-line and its layout can mismatch this build, overflowing an adjacent global.
+    class CacheRWLock
     {
-        if (!b3Shape_IsValid(shapeA) || !b3Shape_IsValid(shapeB))
-            return true;
+    public:
+        void LockForRead()
+        {
+            for (;;)
+            {
+                int32 s = m_state.load(std::memory_order_relaxed);
+                if (s >= 0 && m_state.compare_exchange_weak(s, s + 1, std::memory_order_acquire))
+                    return;
+            }
+        }
+        void UnlockRead()
+        {
+            m_state.fetch_sub(1, std::memory_order_release);
+        }
+        void LockForWrite()
+        {
+            for (;;)
+            {
+                int32 expected = 0;
+                if (m_state.compare_exchange_weak(expected, -1, std::memory_order_acquire))
+                    return;
+            }
+        }
+        void UnlockWrite()
+        {
+            m_state.store(0, std::memory_order_release);
+        }
 
-        Box3DPhysicsObject* pA = static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(shapeA)));
-        Box3DPhysicsObject* pB = static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(shapeB)));
-        if (!pA || !pB)
-            return true;
+    private:
+        std::atomic<int32> m_state{ 0 }; // >0 = reader count, -1 = writer
+    };
 
+    // Workers read the cached per-pair decision concurrently (read lock); only a first-time miss takes the
+    // write lock, which also serializes the one non-thread-safe game call.
+    CacheRWLock g_CollisionCacheLock;
+
+    Box3DPhysicsObject* ObjectFromShapeFast(b3ShapeId shape)
+    {
+        if (!b3Shape_IsValid(shape))
+            return nullptr;
+        return static_cast<Box3DPhysicsObject*>(b3Body_GetUserData(b3Shape_GetBody(shape)));
+    }
+
+    // Cheap lock-free checks, safe to run per contact every step (collision disabled or object dying mid-step).
+    bool LocalShouldCollide(Box3DPhysicsObject* pA, Box3DPhysicsObject* pB)
+    {
         if (!pA->IsCollisionEnabled() || !pB->IsCollisionEnabled())
             return false;
         if ((pA->GetCallbackFlags() | pB->GetCallbackFlags()) & CALLBACK_MARKED_FOR_DELETE)
+            return false;
+        return true;
+    }
+
+    // Whether two shapes' objects may collide (collision groups, no-collide, debris). The game solver's
+    // answer for a pair is stable, so it's cached per pair per rules-epoch; the game is asked at most once
+    // per pair (on a cache miss) instead of for every pair every step.
+    bool ShapesCollide(void* context, b3ShapeId shapeA, b3ShapeId shapeB)
+    {
+        Box3DPhysicsObject* pA = ObjectFromShapeFast(shapeA);
+        Box3DPhysicsObject* pB = ObjectFromShapeFast(shapeB);
+        if (!pA || !pB)
+            return true;
+        if (!LocalShouldCollide(pA, pB))
             return false;
 
         IPhysicsCollisionSolver* pSolver = static_cast<Box3DPhysicsEnvironment*>(context)->GetCollisionSolver();
         if (!pSolver)
             return true;
 
-        AUTO_LOCK(g_CollisionSolverMutex);
-        return pSolver->ShouldCollide(pA, pB, pA->GetGameData(), pB->GetGameData()) != 0;
+        // Store each pair once, on the lower-id object, keyed by the partner's id and its rules epoch
+        // (owner-side invalidation is handled by clearing its cache on recheck).
+        Box3DPhysicsObject* pOwner = pA->m_nUniqueId < pB->m_nUniqueId ? pA : pB;
+        Box3DPhysicsObject* pPartner = pOwner == pA ? pB : pA;
+        const uint64 partnerId = pPartner->m_nUniqueId;
+        const uint32 partnerEpoch = pPartner->m_nRulesEpoch;
+
+        bool bCollide;
+        g_CollisionCacheLock.LockForRead();
+        const bool bHit = pOwner->TryGetCachedCollision(partnerId, partnerEpoch, bCollide);
+        g_CollisionCacheLock.UnlockRead();
+        if (bHit)
+            return bCollide;
+
+        // Miss: the write lock serializes both the cache write and the non-thread-safe game call. Re-check
+        // under it in case another worker resolved the same pair first.
+        g_CollisionCacheLock.LockForWrite();
+        if (!pOwner->TryGetCachedCollision(partnerId, partnerEpoch, bCollide))
+        {
+            bCollide = pSolver->ShouldCollide(pA, pB, pA->GetGameData(), pB->GetGameData()) != 0;
+            pOwner->CacheCollision(partnerId, partnerEpoch, bCollide);
+        }
+        g_CollisionCacheLock.UnlockWrite();
+        return bCollide;
     }
 
-    // Broadphase filter (new pairs) and pre-solve (existing pairs, so a runtime no-collide takes effect).
+    // New pairs (broadphase): the full decision including the game's per-pair rules, decided once.
     bool Box3DCustomFilter(b3ShapeId a, b3ShapeId b, void* ctx)
     {
         return ShapesCollide(ctx, a, b);
     }
-    bool Box3DPreSolve(b3ShapeId a, b3ShapeId b, b3Pos, b3Vec3, void* ctx)
+    // Existing pairs, every step: cheap lock-free checks only. The custom filter already decided this pair
+    // when it formed, and it persists, so the game solver is not re-asked here.
+    bool Box3DPreSolve(b3ShapeId a, b3ShapeId b, b3Pos, b3Vec3, void*)
     {
-        return ShapesCollide(ctx, a, b);
+        Box3DPhysicsObject* pA = ObjectFromShapeFast(a);
+        Box3DPhysicsObject* pB = ObjectFromShapeFast(b);
+        if (!pA || !pB)
+            return true;
+        return LocalShouldCollide(pA, pB);
     }
 } // namespace
 

@@ -8,6 +8,8 @@
 
 #include "vbox_environment.h"
 
+#include <unordered_map>
+
 class IPredictedPhysicsObject;
 class Box3DPhysicsShadowController;
 
@@ -221,6 +223,27 @@ public:
     void RecomputeDragBases();
     void ApplyAirDrag(float flAirDensity, float dt);
 
+    // Cached game ShouldCollide decision vs a partner, keyed by partner id and tagged with the partner's
+    // rules epoch. Accessed only under the environment's collision-cache rwlock.
+    bool TryGetCachedCollision(uint64 partnerId, uint32 partnerEpoch, bool& outCollide) const
+    {
+        const auto it = m_CollisionCache.find(partnerId);
+        if (it == m_CollisionCache.end() || (uint32)(it->second >> 1) != partnerEpoch)
+            return false;
+        outCollide = (it->second & 1ull) != 0;
+        return true;
+    }
+    void CacheCollision(uint64 partnerId, uint32 partnerEpoch, bool collide)
+    {
+        if (m_CollisionCache.size() > 4096) // bound growth for a long-lived mover
+            m_CollisionCache.clear();
+        m_CollisionCache[partnerId] = ((uint64)partnerEpoch << 1) | (collide ? 1ull : 0ull);
+    }
+
+    // Bumped when the game changes this object's collision rules, staling cached decisions that name it as a
+    // partner. Written only from RecheckCollisionFilter (main thread, outside the step), so no lock needed.
+    uint32 m_nRulesEpoch = 1;
+
 private:
     // Recompute m_flBuoyancyRatio from mass/volume and material density.
     void CalculateBuoyancy();
@@ -261,6 +284,9 @@ private:
     float m_flAngularDragCoefficient = 0.0f;
     Vector m_dragBasis = vec3_origin;
     Vector m_angDragBasis = vec3_origin;
+
+    // partner unique id -> (rulesEpoch << 1) | collideBit. Guarded by the env's collision-cache rwlock.
+    std::unordered_map<uint64, uint64> m_CollisionCache;
 
     // Box3D reports zero mass for static bodies, so cache what the game set.
     float m_flCachedMass = 0.0f;

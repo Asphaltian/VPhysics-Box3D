@@ -1162,50 +1162,144 @@ void Box3DPhysicsCollision::DestroyDebugMesh(int vertCount, Vector* outVerts)
     Log_Stub(LOG_VBox3D);
 }
 
-// Empty collision query. The engine virtual-calls the returned object, so it must be non-null.
 namespace
 {
-    class Box3DDummyCollisionQuery final : public ICollisionQuery
+    class Box3DCollisionQuery final : public ICollisionQuery
     {
     public:
+        Box3DCollisionQuery(CPhysCollide* pCollide)
+        {
+            if (!pCollide)
+                return;
+
+            for (int c = 0; c < pCollide->m_Convexes.Count(); c++)
+            {
+                CPhysConvex* pConvex = pCollide->m_Convexes[c];
+
+                Convex_t info;
+                info.gameData = pConvex ? pConvex->m_nGameData : 0;
+                info.triStart = m_Materials.Count();
+                info.triCount = 0;
+
+                if (pConvex && pConvex->m_pHull)
+                {
+                    const b3HullData* pHull = pConvex->m_pHull;
+                    const b3Vec3* pPoints = b3GetHullPoints(pHull);
+                    const b3HullFace* pFaces = b3GetHullFaces(pHull);
+                    const b3HullHalfEdge* pEdges = b3GetHullEdges(pHull);
+
+                    for (int f = 0; f < pHull->faceCount; f++)
+                    {
+                        CUtlVector<int> loop;
+                        const uint8_t start = pFaces[f].edge;
+                        uint8_t e = start;
+                        do
+                        {
+                            loop.AddToTail(pEdges[e].origin);
+                            e = pEdges[e].next;
+                        } while (e != start && loop.Count() < 256);
+
+                        for (int k = 1; k + 1 < loop.Count(); k++)
+                        {
+                            m_Verts.AddToTail(BoxToSource::Distance(pPoints[loop[0]]));
+                            m_Verts.AddToTail(BoxToSource::Distance(pPoints[loop[k]]));
+                            m_Verts.AddToTail(BoxToSource::Distance(pPoints[loop[k + 1]]));
+                            m_Materials.AddToTail(0);
+                            info.triCount++;
+                        }
+                    }
+                }
+
+                m_Convexes.AddToTail(info);
+            }
+
+            if (pCollide->m_pMesh)
+            {
+                const b3MeshData* pMesh = pCollide->m_pMesh;
+                const b3Vec3* pVerts = b3GetMeshVertices(pMesh);
+                const b3MeshTriangle* pTris = b3GetMeshTriangles(pMesh);
+                const uint8_t* pMats = b3GetMeshMaterialIndices(pMesh);
+
+                Convex_t info;
+                info.gameData = 0;
+                info.triStart = m_Materials.Count();
+                info.triCount = 0;
+
+                for (int t = 0; t < pMesh->triangleCount; t++)
+                {
+                    m_Verts.AddToTail(BoxToSource::Distance(pVerts[pTris[t].index1]));
+                    m_Verts.AddToTail(BoxToSource::Distance(pVerts[pTris[t].index2]));
+                    m_Verts.AddToTail(BoxToSource::Distance(pVerts[pTris[t].index3]));
+                    m_Materials.AddToTail(pMats ? pMats[t] : 0);
+                    info.triCount++;
+                }
+
+                m_Convexes.AddToTail(info);
+            }
+        }
+
         int ConvexCount() override
         {
-            return 0;
+            return m_Convexes.Count();
         }
-        int TriangleCount(int) override
+        int TriangleCount(int convexIndex) override
         {
-            return 0;
+            return (convexIndex >= 0 && convexIndex < m_Convexes.Count()) ? m_Convexes[convexIndex].triCount : 0;
         }
-        unsigned int GetGameData(int) override
+        unsigned int GetGameData(int convexIndex) override
         {
-            return 0;
+            return (convexIndex >= 0 && convexIndex < m_Convexes.Count()) ? m_Convexes[convexIndex].gameData : 0;
         }
-        void GetTriangleVerts(int, int, Vector* verts) override
+        void GetTriangleVerts(int convexIndex, int triangleIndex, Vector* verts) override
         {
-            if (verts)
+            if (!verts)
+                return;
+            if (convexIndex < 0 || convexIndex >= m_Convexes.Count() || triangleIndex < 0
+                || triangleIndex >= m_Convexes[convexIndex].triCount)
+            {
                 verts[0] = verts[1] = verts[2] = vec3_origin;
+                return;
+            }
+            const int base = (m_Convexes[convexIndex].triStart + triangleIndex) * 3;
+            verts[0] = m_Verts[base + 0];
+            verts[1] = m_Verts[base + 1];
+            verts[2] = m_Verts[base + 2];
         }
         void SetTriangleVerts(int, int, const Vector*) override
         {
         }
-        int GetTriangleMaterialIndex(int, int) override
+        int GetTriangleMaterialIndex(int convexIndex, int triangleIndex) override
         {
-            return 0;
+            if (convexIndex < 0 || convexIndex >= m_Convexes.Count() || triangleIndex < 0
+                || triangleIndex >= m_Convexes[convexIndex].triCount)
+                return 0;
+            return m_Materials[m_Convexes[convexIndex].triStart + triangleIndex];
         }
         void SetTriangleMaterialIndex(int, int, int) override
         {
         }
+
+    private:
+        struct Convex_t
+        {
+            int triStart;
+            int triCount;
+            unsigned int gameData;
+        };
+        CUtlVector<Vector> m_Verts;
+        CUtlVector<int> m_Materials;
+        CUtlVector<Convex_t> m_Convexes;
     };
 } // namespace
 
 ICollisionQuery* Box3DPhysicsCollision::CreateQueryModel(CPhysCollide* pCollide)
 {
-    return new Box3DDummyCollisionQuery;
+    return new Box3DCollisionQuery(pCollide);
 }
 
 void Box3DPhysicsCollision::DestroyQueryModel(ICollisionQuery* pQuery)
 {
-    delete static_cast<Box3DDummyCollisionQuery*>(pQuery);
+    delete static_cast<Box3DCollisionQuery*>(pQuery);
 }
 
 IPhysicsCollision* Box3DPhysicsCollision::ThreadContextCreate()

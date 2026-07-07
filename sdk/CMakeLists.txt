@@ -180,7 +180,7 @@ if(VOX_DEDICATED AND NOT WIN32 AND VOX_ARCH STREQUAL x86)
 endif()
 vox_prebuilt(_tier0_lib ${_tier0_name})
 vox_prebuilt(_vstdlib_lib ${_vstdlib_name})
-set(_sdk_link "${_tier0_lib}" "${_vstdlib_lib}")
+set(_sdk_link "")
 
 foreach(_pair "tier1;_tier1_sources;TIER1_STATIC_LIB" "tier2;_tier2_sources;TIER2_STATIC_LIB" "mathlib;_mathlib_sources;MATHLIB_LIB")
     list(GET _pair 0 _lib)
@@ -194,6 +194,7 @@ foreach(_pair "tier1;_tier1_sources;TIER1_STATIC_LIB" "tier2;_tier2_sources;TIER
         list(APPEND _sdk_link "${_pl}")
     endif()
 endforeach()
+list(APPEND _sdk_link "${_tier0_lib}" "${_vstdlib_lib}")
 
 if(WIN32 AND EXISTS "${_lib_dir}/interfaces.lib")
     list(APPEND _sdk_link "${_lib_dir}/interfaces.lib")

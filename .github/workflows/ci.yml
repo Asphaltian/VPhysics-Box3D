@@ -59,3 +59,9 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}-Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.preset }}-${{ matrix.config }}
+          path: build/${{ matrix.preset }}/bin/${{ matrix.config }}/vphysics.so
+          if-no-files-found: ignore

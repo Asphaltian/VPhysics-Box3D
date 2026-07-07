@@ -318,15 +318,22 @@ IPhysicsConstraint* Box3DPhysicsEnvironment::CreateFixedConstraint(
     const b3WorldId world = m_WorldId;
     const b3BodyId ref = pRef->GetBodyID(), att = pAtt->GetBodyID();
 
-    // Weld at the game's designed attached->ref pose (attachedRefXform), not the live pose. frameA is the
+	// Weld at the game's designed attached->ref pose (attachedRefXform), not the live pose. frameA is the
     // reference origin; frameB is its inverse.
-    const b3Transform frameB = b3InvertTransform(SourceToBox::Transform(fixed.attachedRefXform));
+    const b3Transform relative = SourceToBox::Transform(fixed.attachedRefXform);
+    b3Transform frameA = b3Transform_identity;
+    b3Transform frameB = b3InvertTransform(relative);
+    if (pRef->IsStatic() && !pAtt->IsStatic())
+    {
+        frameA = relative;
+        frameB = b3Transform_identity;
+    }
 
     auto build = [=]() {
         b3WeldJointDef def = b3DefaultWeldJointDef();
         def.base.bodyIdA = ref;
         def.base.bodyIdB = att;
-        def.base.localFrameA = b3Transform_identity;
+        def.base.localFrameA = frameA;
         def.base.localFrameB = frameB;
         return b3CreateWeldJoint(world, &def);
     };

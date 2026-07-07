@@ -136,7 +136,7 @@ public:
     void SetupAngularLimits(
         const b3Transform& frameRef, const b3Transform& frameAtt, bool bCone, float coneAngle, bool bTwist, float twistMin,
         float twistMax, float flFriction, bool bHasJoint);
-    void SolveAngularLimits(float dt, bool bApplyFriction);
+    bool SolveAngularLimits(float dt, bool bApplyFriction);
     bool IsAngularLimits() const
     {
         return m_bAngularLimits;

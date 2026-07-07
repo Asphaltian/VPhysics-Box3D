@@ -535,13 +535,19 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
     // IVP actuators/constraints run within the PSI: apply pre-step so the solver integrates them.
     for (int i = 0; i < m_Springs.Count(); i++)
         m_Springs[i]->Simulate(deltaTime);
-    // Iterated so a bone chain's limits converge together (Havana solves them jointly in the LCS).
-    for (int nIter = 0; nIter < 4; nIter++)
+    // Iterated so chained constraints converge together; ones that applied nothing drop out.
+    CUtlVector<Box3DPhysicsConstraint*> activeLimits;
+    for (int i = 0; i < m_Pulleys.Count(); i++)
     {
-        for (int i = 0; i < m_Pulleys.Count(); i++)
+        if (m_Pulleys[i]->IsAngularLimits() && m_Pulleys[i]->SolveAngularLimits(deltaTime, true))
+            activeLimits.AddToTail(m_Pulleys[i]);
+    }
+    for (int nIter = 1; nIter < 4 && activeLimits.Count() > 0; nIter++)
+    {
+        for (int i = activeLimits.Count() - 1; i >= 0; i--)
         {
-            if (m_Pulleys[i]->IsAngularLimits())
-                m_Pulleys[i]->SolveAngularLimits(deltaTime, nIter == 0);
+            if (!activeLimits[i]->SolveAngularLimits(deltaTime, false))
+                activeLimits.FastRemove(i);
         }
     }
 

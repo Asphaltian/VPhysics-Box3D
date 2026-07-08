@@ -581,6 +581,11 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
     // (spinning wheels exceed any fixed value); fall back to IVP's PI/2 per tick when unset.
     m_flMaxAngularVelocity = m_PerformanceParams.maxAngularVelocity > 0.0f ? DEG2RAD(m_PerformanceParams.maxAngularVelocity)
                                                                            : (3.14159265f * 0.5f) / deltaTime;
+
+    const float flMaxLinear = m_PerformanceParams.maxVelocity > 0.0f
+        ? SourceToBox::Distance(m_PerformanceParams.maxVelocity)
+        : SourceToBox::Distance(4000.0f); // IVP's default linear cap when unset
+
     for (int i = 0; i < events.moveCount; i++)
     {
         Box3DPhysicsObject* pObject = static_cast<Box3DPhysicsObject*>(events.moveEvents[i].userData);
@@ -589,10 +594,16 @@ void Box3DPhysicsEnvironment::Simulate(float deltaTime)
         m_ActiveObjects.AddToTail(pObject);
 
         const b3BodyId body = pObject->GetBodyID();
-        const b3Vec3 w = b3Body_GetAngularVelocity(body);
-        const float flLen = sqrtf(b3Dot(w, w));
-        if (flLen > m_flMaxAngularVelocity)
-            b3Body_SetAngularVelocity(body, b3MulSV(m_flMaxAngularVelocity / flLen, w));
+
+        const b3Vec3 angVel = b3Body_GetAngularVelocity(body);
+        const float flAngularLen = sqrtf(b3Dot(angVel, angVel));
+        if (flAngularLen > m_flMaxAngularVelocity)
+            b3Body_SetAngularVelocity(body, b3MulSV(m_flMaxAngularVelocity / flAngularLen, angVel));
+
+        const b3Vec3 linVel = b3Body_GetLinearVelocity(body);
+        const float flLinearLen = sqrtf(b3Dot(linVel, linVel));
+        if (flLinearLen > flMaxLinear)
+            b3Body_SetLinearVelocity(body, b3MulSV(flMaxLinear / flLinearLen, linVel));
     }
 
     DrainContactEvents();

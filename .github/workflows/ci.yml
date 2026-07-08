@@ -36,7 +36,7 @@ jobs:
           if-no-files-found: ignore
 
   linux:
-    name: linux ${{ matrix.preset }} (experimental)
+    name: linux ${{ matrix.preset }} ${{ matrix.config }}
     runs-on: ubuntu-22.04
     continue-on-error: true
     strategy:
@@ -59,7 +59,7 @@ jobs:
         run: cmake --preset ${{ matrix.preset }}
 
       - name: Build
-        run: cmake --build --preset ${{ matrix.preset }}-Release
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
 
       - uses: actions/upload-artifact@v4
         with:

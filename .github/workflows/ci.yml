@@ -43,6 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         preset: [ gmod-linux-x64, gmod-linux-x86, sdk2013-mp-linux, sdk2013-sp-linux, gmod-linux-x64-dedicated, gmod-linux-x86-dedicated ]
+        config: [ Debug, Release ]
     steps:
       - uses: actions/checkout@v4
         with:

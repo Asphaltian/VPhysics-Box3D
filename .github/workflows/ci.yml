@@ -36,7 +36,7 @@ jobs:
           if-no-files-found: ignore
 
   linux:
-    name: linux ${{ matrix.preset }} ${{ matrix.config }}
+    name: linux ${{ matrix.preset }} ${{ matrix.config }} (experimental)
     runs-on: ubuntu-22.04
     continue-on-error: true
     strategy:

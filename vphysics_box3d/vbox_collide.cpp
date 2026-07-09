@@ -34,6 +34,138 @@ EXPOSE_SINGLE_INTERFACE_GLOBALVAR(
 // to cook. Cap vertices so b3CreateHull simplifies below the limit (44 verts -> 252 half-edges).
 static constexpr int kMaxHullVertices = 44;
 
+// The three guards below work around upstream Box3D bugs (b3CreateHull hangs or faults on input its
+// builder tolerances can't handle)
+
+// Upstream bug: quickhull livelocks when a cloud's flattest-axis spread sits near its float
+// tolerance (~1e-5 x extent). Reject below 1e-4 x extent.
+static bool CloudIsCookable(const b3Vec3* pPoints, int nCount)
+{
+    if (nCount < 4)
+        return false;
+
+    b3Vec3 vMin = pPoints[0], vMax = pPoints[0], vSum = {};
+    for (int i = 0; i < nCount; i++)
+    {
+        const b3Vec3 p = pPoints[i];
+        if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z))
+            return false;
+        vMin = b3Min(vMin, p);
+        vMax = b3Max(vMax, p);
+        vSum = b3Add(vSum, p);
+    }
+    const b3Vec3 vExtent = b3Sub(vMax, vMin);
+    const float flMaxExtent = b3MaxFloat(vExtent.x, b3MaxFloat(vExtent.y, vExtent.z));
+    if (flMaxExtent <= 0.0f)
+        return false;
+
+    // Smallest covariance eigenvalue = squared spread along the flattest axis.
+    const b3Vec3 vMean = b3MulSV(1.0f / nCount, vSum);
+    float xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+    for (int i = 0; i < nCount; i++)
+    {
+        const b3Vec3 d = b3Sub(pPoints[i], vMean);
+        xx += d.x * d.x;
+        yy += d.y * d.y;
+        zz += d.z * d.z;
+        xy += d.x * d.y;
+        xz += d.x * d.z;
+        yz += d.y * d.z;
+    }
+    const float inv = 1.0f / nCount;
+    xx *= inv, yy *= inv, zz *= inv, xy *= inv, xz *= inv, yz *= inv;
+
+    float flMinEig;
+    const float p1 = xy * xy + xz * xz + yz * yz;
+    if (p1 == 0.0f)
+    {
+        flMinEig = b3MinFloat(xx, b3MinFloat(yy, zz));
+    }
+    else
+    {
+        const float q = (xx + yy + zz) / 3.0f;
+        const float p2 = Square(xx - q) + Square(yy - q) + Square(zz - q) + 2.0f * p1;
+        const float p = sqrtf(p2 / 6.0f);
+        const float invp = 1.0f / p;
+        const float b00 = (xx - q) * invp, b11 = (yy - q) * invp, b22 = (zz - q) * invp;
+        const float b01 = xy * invp, b02 = xz * invp, b12 = yz * invp;
+        float r = 0.5f * (b00 * (b11 * b22 - b12 * b12) - b01 * (b01 * b22 - b12 * b02) + b02 * (b01 * b12 - b11 * b02));
+        r = b3ClampFloat(r, -1.0f, 1.0f);
+        flMinEig = q + 2.0f * p * cosf(acosf(r) / 3.0f + 2.0f * M_PI_F / 3.0f);
+    }
+
+    return sqrtf(b3MaxFloat(flMinEig, 0.0f)) >= 1e-4f * flMaxExtent;
+}
+
+// Upstream bug: quickhull's vertex-budget selection hangs or faults on dense sheet-like clouds.
+// Farthest-point decimation does the selection instead, keeping rims and extremes.
+static constexpr int kMaxCloudPoints = 40;
+
+static int DecimateCloud(const b3Vec3* pIn, int nCount, b3Vec3* pOut)
+{
+    int nFirst = 0;
+    for (int i = 1; i < nCount; i++)
+        if (pIn[i].x < pIn[nFirst].x)
+            nFirst = i;
+    pOut[0] = pIn[nFirst];
+
+    CUtlVector<float> dist;
+    dist.SetCount(nCount);
+    for (int i = 0; i < nCount; i++)
+        dist[i] = b3DistanceSquared(pIn[i], pOut[0]);
+
+    int nOut = 1;
+    while (nOut < kMaxCloudPoints)
+    {
+        int nBest = 0;
+        for (int i = 1; i < nCount; i++)
+            if (dist[i] > dist[nBest])
+                nBest = i;
+        if (dist[nBest] <= 0.0f)
+            break;
+        pOut[nOut++] = pIn[nBest];
+        for (int i = 0; i < nCount; i++)
+        {
+            const float d = b3DistanceSquared(pIn[i], pIn[nBest]);
+            if (d < dist[i])
+                dist[i] = d;
+        }
+    }
+    return nOut;
+}
+
+// Upstream bug: residual quickhull faults (release strips its capacity asserts). Contain them so a
+// failed cook returns null; leaks the builder arena on fault.
+static b3HullData* CookHull(const b3Vec3* pPoints, int nCount, int nMaxVerts)
+{
+#ifdef _WIN32
+    __try
+    {
+        return b3CreateHull(pPoints, nCount, nMaxVerts);
+    }
+    __except (1 /* EXCEPTION_EXECUTE_HANDLER */)
+    {
+        Log_Warning(LOG_VBox3D, "Hull cook faulted on %d points\n", nCount);
+        return nullptr;
+    }
+#else
+    return b3CreateHull(pPoints, nCount, nMaxVerts);
+#endif
+}
+
+static b3HullData* CreateHullSafe(const b3Vec3* pPoints, int nCount, int nMaxVerts)
+{
+    if (!CloudIsCookable(pPoints, nCount))
+        return nullptr;
+
+    if (nCount <= kMaxCloudPoints)
+        return CookHull(pPoints, nCount, nMaxVerts);
+
+    b3Vec3 decimated[kMaxCloudPoints];
+    const int nDecimated = DecimateCloud(pPoints, nCount, decimated);
+    return CookHull(decimated, nDecimated, nMaxVerts);
+}
+
 namespace ivp_compat
 {
     struct collideheader_t
@@ -165,9 +297,28 @@ namespace ivp_compat
             }
         }
 
-        b3HullData* pHull = b3CreateHull(verts.Base(), nVertCount, kMaxHullVertices);
+        b3HullData* pHull = CreateHullSafe(verts.Base(), nVertCount, kMaxHullVertices);
         if (!pHull)
-            return nullptr;
+        {
+            // Solids must not silently lose collision: approximate an uncookable ledge by its padded box.
+            b3Vec3 vMin = verts[0], vMax = verts[0];
+            for (int i = 1; i < nVertCount; i++)
+            {
+                vMin = b3Min(vMin, verts[i]);
+                vMax = b3Max(vMax, verts[i]);
+            }
+            const float flPad = SourceToBox::Distance(0.1f);
+            const b3Vec3 vPad = { flPad, flPad, flPad };
+            vMin = b3Sub(vMin, vPad);
+            vMax = b3Add(vMax, vPad);
+            b3Vec3 corners[8];
+            for (int i = 0; i < 8; i++)
+                corners[i] = b3Vec3{ (i & 1) ? vMax.x : vMin.x, (i & 2) ? vMax.y : vMin.y, (i & 4) ? vMax.z : vMin.z };
+            pHull = CreateHullSafe(corners, 8, 8);
+            if (!pHull)
+                return nullptr;
+            Log_Warning(LOG_VBox3D, "Uncookable ledge (%d points) approximated by its bounding box\n", nVertCount);
+        }
 
         CPhysConvex* pConvex = new CPhysConvex;
         pConvex->m_pHull = pHull;
@@ -251,75 +402,91 @@ const b3HullData* CPhysConvex::GetSimHull()
     if (!m_pHull)
         return nullptr;
 
-    const int nFaceCount = m_pHull->faceCount;
-    if (nFaceCount < 4)
+    const int nVertexCount = m_pHull->vertexCount;
+    if (m_pHull->faceCount < 4 || nVertexCount < 4)
         return m_pHull;
 
+    const b3Vec3* pPoints = b3GetHullPoints(m_pHull);
+    const b3HullVertex* pVertices = b3GetHullVertices(m_pHull);
+    const b3HullHalfEdge* pEdges = b3GetHullEdges(m_pHull);
     const b3Plane* pPlanes = b3GetHullPlanes(m_pHull);
 
-    // Source .phy hulls are authored pre-shrunk by IVP's collision tolerance (0.25in per face); box3d
-    // rests contacts at the true surface, so re-inflate each face plane outward by that distance and
-    // re-enumerate the vertices (triple-plane intersections kept only if inside every offset plane).
-    // Offsetting the planes, not the vertices, keeps rotated/diagonal convexes from shearing.
+    // .phy hulls are authored pre-shrunk by the engine's collision tolerance (0.25in per face); box3d
+    // rests contacts at the true surface, so inflate every face plane back outward. Each vertex moves
+    // to the intersection of its own incident offset planes
     const float flInflate = SourceToBox::Distance(0.25f);
-    const float flInsideEps = SourceToBox::Distance(0.01f);
-    const float flDedupEps = SourceToBox::Distance(0.01f);
 
     CUtlVector<b3Vec3> verts;
-    for (int i = 0; i < nFaceCount; i++)
+    verts.EnsureCapacity(nVertexCount);
+    for (int v = 0; v < nVertexCount; v++)
     {
-        const b3Vec3 ni = pPlanes[i].normal;
-        for (int j = i + 1; j < nFaceCount; j++)
+        const b3Vec3 p = pPoints[v];
+
+        int faces[32];
+        int nFaces = 0;
+        const int nStart = pVertices[v].edge;
+        int e = nStart;
+        do
         {
-            const b3Vec3 nj = pPlanes[j].normal;
-            for (int k = j + 1; k < nFaceCount; k++)
+            faces[nFaces++] = pEdges[e].face;
+            e = pEdges[pEdges[e].twin].next;
+        } while (e != nStart && nFaces < 32);
+
+        // Pick the three most independent incident normals.
+        const b3Vec3 n0 = pPlanes[faces[0]].normal;
+        int i1 = -1, i2 = -1;
+        float flBestCross = 1e-3f;
+        for (int i = 1; i < nFaces; i++)
+        {
+            const float c = b3Length(b3Cross(n0, pPlanes[faces[i]].normal));
+            if (c > flBestCross)
             {
-                const b3Vec3 nk = pPlanes[k].normal;
-
-                const b3Vec3 cjk = b3Cross(nj, nk);
-                const float det = b3Dot(ni, cjk);
-                if (fabsf(det) < 1e-6f)
-                    continue;
-
-                const float di = pPlanes[i].offset + flInflate;
-                const float dj = pPlanes[j].offset + flInflate;
-                const float dk = pPlanes[k].offset + flInflate;
-
-                const b3Vec3 cki = b3Cross(nk, ni);
-                const b3Vec3 cij = b3Cross(ni, nj);
-                const b3Vec3 x = b3MulSV(1.0f / det, b3Add(b3Add(b3MulSV(di, cjk), b3MulSV(dj, cki)), b3MulSV(dk, cij)));
-
-                bool bInside = true;
-                for (int m = 0; m < nFaceCount; m++)
-                {
-                    if (b3Dot(pPlanes[m].normal, x) - (pPlanes[m].offset + flInflate) > flInsideEps)
-                    {
-                        bInside = false;
-                        break;
-                    }
-                }
-                if (!bInside)
-                    continue;
-
-                bool bDup = false;
-                for (int v = 0; v < verts.Count(); v++)
-                {
-                    if (b3Length(b3Sub(verts[v], x)) < flDedupEps)
-                    {
-                        bDup = true;
-                        break;
-                    }
-                }
-                if (!bDup)
-                    verts.AddToTail(x);
+                flBestCross = c;
+                i1 = i;
             }
         }
+        float flBestDet = 1e-4f;
+        if (i1 >= 0)
+        {
+            const b3Vec3 c01 = b3Cross(n0, pPlanes[faces[i1]].normal);
+            for (int i = 1; i < nFaces; i++)
+            {
+                if (i == i1)
+                    continue;
+                const float d = fabsf(b3Dot(c01, pPlanes[faces[i]].normal));
+                if (d > flBestDet)
+                {
+                    flBestDet = d;
+                    i2 = i;
+                }
+            }
+        }
+
+        b3Vec3 x = {};
+        if (i2 >= 0)
+        {
+            const b3Vec3 n1 = pPlanes[faces[i1]].normal, n2 = pPlanes[faces[i2]].normal;
+            const float det = b3Dot(n0, b3Cross(n1, n2));
+            const float d0 = pPlanes[faces[0]].offset + flInflate;
+            const float d1 = pPlanes[faces[i1]].offset + flInflate;
+            const float d2 = pPlanes[faces[i2]].offset + flInflate;
+            x = b3MulSV(
+                1.0f / det,
+                b3Add(b3Add(b3MulSV(d0, b3Cross(n1, n2)), b3MulSV(d1, b3Cross(n2, n0))), b3MulSV(d2, b3Cross(n0, n1))));
+        }
+        if (i2 < 0 || b3Length(b3Sub(x, p)) > 20.0f * flInflate)
+        {
+            // Ill-conditioned corner (near-parallel incident faces): slide along the summed normal.
+            b3Vec3 sum = n0;
+            for (int i = 1; i < nFaces; i++)
+                sum = b3Add(sum, pPlanes[faces[i]].normal);
+            const float flLen = b3Length(sum);
+            x = b3MulAdd(p, flInflate, flLen > 1e-6f ? b3MulSV(1.0f / flLen, sum) : n0);
+        }
+        verts.AddToTail(x);
     }
 
-    if (verts.Count() < 4)
-        return m_pHull;
-
-    m_pSimHull = b3CreateHull(verts.Base(), verts.Count(), kMaxHullVertices);
+    m_pSimHull = CreateHullSafe(verts.Base(), verts.Count(), kMaxHullVertices);
     return m_pSimHull ? m_pSimHull : m_pHull;
 }
 
@@ -330,7 +497,7 @@ CPhysConvex* Box3DPhysicsCollision::ConvexFromVerts(Vector** pVerts, int vertCou
     for (int i = 0; i < vertCount; i++)
         points[i] = SourceToBox::Distance(*pVerts[i]);
 
-    return HullToConvex(b3CreateHull(points.Base(), vertCount, kMaxHullVertices));
+    return HullToConvex(CreateHullSafe(points.Base(), vertCount, kMaxHullVertices));
 }
 
 CPhysConvex* Box3DPhysicsCollision::ConvexFromPlanes(float* pPlanes, int planeCount, float mergeDistance)
@@ -382,7 +549,7 @@ CPhysConvex* Box3DPhysicsCollision::BBoxToConvex(const Vector& mins, const Vecto
         corners[i] = SourceToBox::Distance(corner);
     }
 
-    return HullToConvex(b3CreateHull(corners, 8, 8));
+    return HullToConvex(CreateHullSafe(corners, 8, 8));
 }
 
 CPhysConvex* Box3DPhysicsCollision::ConvexFromConvexPolyhedron(const CPolyhedron& ConvexPolyhedron)
@@ -392,7 +559,7 @@ CPhysConvex* Box3DPhysicsCollision::ConvexFromConvexPolyhedron(const CPolyhedron
     for (int i = 0; i < ConvexPolyhedron.iVertexCount; i++)
         points[i] = SourceToBox::Distance(ConvexPolyhedron.pVertices[i]);
 
-    return HullToConvex(b3CreateHull(points.Base(), ConvexPolyhedron.iVertexCount, kMaxHullVertices));
+    return HullToConvex(CreateHullSafe(points.Base(), ConvexPolyhedron.iVertexCount, kMaxHullVertices));
 }
 
 void Box3DPhysicsCollision::ConvexesFromConvexPolygon(

@@ -1,6 +1,6 @@
 [submodule "box3d"]
 	path = box3d
-	url = https://github.com/ZehMatt/box3d.git
+	url = https://github.com/erincatto/box3d.git
 [submodule "sdk/mini-source-sdk"]
 	path = sdk/mini-source-sdk
 	url = https://github.com/RaphaelIT7/mini-source-sdk

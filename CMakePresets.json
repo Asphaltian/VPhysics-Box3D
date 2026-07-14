@@ -82,7 +82,13 @@
             }
         },
         {
-            "name": "sdk2013-mp-linux",
+            "name": "sdk2013-mp-linux-x64",
+            "displayName": "Source SDK 2013 MP (Linux x64)",
+            "inherits": "_ninja",
+            "cacheVariables": { "VOX_SDK": "sdk2013-mp" }
+        },
+        {
+            "name": "sdk2013-mp-linux-x86",
             "displayName": "Source SDK 2013 MP (Linux x86)",
             "inherits": "_ninja",
             "cacheVariables": {
@@ -141,8 +147,10 @@
         { "name": "gmod-linux-x64-Release", "configurePreset": "gmod-linux-x64", "configuration": "Release" },
         { "name": "gmod-linux-x86-Debug",   "configurePreset": "gmod-linux-x86", "configuration": "Debug" },
         { "name": "gmod-linux-x86-Release", "configurePreset": "gmod-linux-x86", "configuration": "Release" },
-        { "name": "sdk2013-mp-linux-Debug",   "configurePreset": "sdk2013-mp-linux", "configuration": "Debug" },
-        { "name": "sdk2013-mp-linux-Release", "configurePreset": "sdk2013-mp-linux", "configuration": "Release" },
+        { "name": "sdk2013-mp-linux-x64-Debug",   "configurePreset": "sdk2013-mp-linux-x64", "configuration": "Debug" },
+        { "name": "sdk2013-mp-linux-x64-Release", "configurePreset": "sdk2013-mp-linux-x64", "configuration": "Release" },
+        { "name": "sdk2013-mp-linux-x86-Debug",   "configurePreset": "sdk2013-mp-linux-x86", "configuration": "Debug" },
+        { "name": "sdk2013-mp-linux-x86-Release", "configurePreset": "sdk2013-mp-linux-x86", "configuration": "Release" },
         { "name": "sdk2013-sp-linux-Debug",   "configurePreset": "sdk2013-sp-linux", "configuration": "Debug" },
         { "name": "sdk2013-sp-linux-Release", "configurePreset": "sdk2013-sp-linux", "configuration": "Release" },
         { "name": "gmod-linux-x64-dedicated-Debug",   "configurePreset": "gmod-linux-x64-dedicated", "configuration": "Debug" },

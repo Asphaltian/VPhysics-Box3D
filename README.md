@@ -68,8 +68,7 @@ To build, see: [build.md](build.md)
 [![Vehicular Homicide](https://i.ytimg.com/vi/IOlv3qxC7Js/hqdefault.jpg)](https://youtu.be/IOlv3qxC7Js "Vehicular Homicide")
 
 ### Intrusive Thoughts
-[![Intrusive Thoughts](https://i.ytimg.com/vi/Qr0fF_xtnmU/hqdefault.jpg)]([https://youtu.be/IOlv3qxC7Js](https://youtu.be/Qr0fF_xtnmU
- "Intrusive Thoughts")
+[![Intrusive Thoughts](https://i.ytimg.com/vi/Qr0fF_xtnmU/hqdefault.jpg)](https://youtu.be/Qr0fF_xtnmU "Intrusive Thoughts")
 
 ## Credits
 

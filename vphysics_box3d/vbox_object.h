@@ -195,11 +195,12 @@ public:
     {
     }
 
-#if GAME_GMOD
+
     float GetBuoyancyRatio() const override
     {
         return m_flBuoyancyRatio;
     }
+#if GAME_GMOD
     int GetLuaReference() const override
     {
         return m_nLuaReference;

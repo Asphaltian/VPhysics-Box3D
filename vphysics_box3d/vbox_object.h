@@ -195,12 +195,14 @@ public:
     {
     }
 
-
+#if defined(GAME_GMOD) || defined(GAME_SDK2013_MP)
     float GetBuoyancyRatio() const override
     {
         return m_flBuoyancyRatio;
     }
-#if GAME_GMOD
+#endif
+
+#if defined(GAME_GMOD)
     int GetLuaReference() const override
     {
         return m_nLuaReference;

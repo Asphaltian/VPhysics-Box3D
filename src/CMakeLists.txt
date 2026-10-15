@@ -1,5 +1,10 @@
 add_library( vphysics SHARED
+	box3d_setup.cpp
+	compact_surface.cpp
+	create_interface.cpp
 	parse_file.cpp
+	physics_collide.cpp
+	physics_collision.cpp
 	physics_collision_set.cpp
 	physics_object_pair_hash.cpp
 	physics_surface_props.cpp

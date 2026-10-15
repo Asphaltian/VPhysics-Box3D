@@ -1,54 +1,8 @@
 # VPhysics-Box3D
 
-Source VPhysics (IVP/Havok) reimplemented on [Box3D](https://github.com/erincatto/box3d). Modelled on [VPhysics-Jolt](https://github.com/Joshua-Ashton/VPhysics-Jolt) (Volt).
+This is a reimplementation of Source VPhysics (IVP/Havok) on [Box3D](https://github.com/erincatto/box3d).
 
 For discussions, please join the Discord server [here](https://discord.gg/rbCJdZjewf).
-
-## Status
-
-| Feature | VPhysics | Volt | Vox3D |
-|:--|:--:|:--:|:--:|
-| Constraints (except pulleys) | ✔️ | ✔️ | ✔️ |
-| Pulleys | ✔️ | ✔️ | ✔️ |
-| Breakable constraints | ✔️ | ❌ | ✔️ |
-| Motion controllers | ✔️ | ✔️ | ✔️ |
-| Constraint motors | ✔️ | ✔️ | ✔️ |
-| Ragdolls | ✔️ | ✔️ | ✔️ |
-| Triggers | ✔️ | ✔️ | ✔️ |
-| Object touch callbacks | ✔️ | ✔️ | ✔️ |
-| Prop damage / breaking | ✔️ | ✔️ | ✔️ |
-| Fluid events | ✔️ | ✔️ | ✔️ |
-| Prop splashing effects | ✔️ | ✔️ | ✔️ |
-| Wheeled vehicles | ✔️ | ✔️ | ✔️ |
-| Raycast vehicles (airboat) | ✔️ | ❌ | ✔️ |
-| Shadow controllers (NPCs, doors) | ✔️ | ✔️ | ✔️ |
-| Save / restore | ✔️ | ✔️ | ✔️ |
-| Portal support | ✔️ | ✔️ | ❌ |
-| Per-object no-collide callbacks | ✔️ | ✔️ | ✔️ |
-| Crash-resistant solver | ❌ | ✔️ | ✔️ |
-| Thousands of objects without lag | ❌ | ✔️ | ✔️ |
-| Multithreaded | ❌ | ✔️ | ✔️ |
-| Player controller | ✔️ | ✔️ | ✔️ |
-
-## Platforms
-
-Build status per CMake preset. Future support for macOS is unknown.
-
-| Preset | Builds | Tested |
-|:--|:--:|:--:|
-| `gmod-x64` | ✔️ | ✔️ |
-| `gmod-x86` | ✔️ |  |
-| `gmod-linux-x86` | ✔️ |  |
-| `gmod-linux-x64` | ✔️ | ✔️ |
-| `gmod-linux-x86-dedicated` | ✔️ |  |
-| `gmod-linux-x64-dedicated` | ✔️ |  |
-| `sdk2013-mp` | ✔️ |  |
-| `sdk2013-mp-linux` | ✔️ |  |
-| `sdk2013-sp` | ✔️ |  |
-| `sdk2013-sp-linux` | ✔️ |  |
-| `asw` | ✔️ |  |
-
-To build, see: [build.md](build.md)
 
 ## Media
 
@@ -74,4 +28,4 @@ To build, see: [build.md](build.md)
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Box3D and Source SDK code retain their respective licenses.
+MIT, see [LICENSE](LICENSE). Third-party code retain their respective licenses.

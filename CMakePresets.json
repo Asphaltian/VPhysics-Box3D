@@ -1,161 +1,53 @@
 {
-    "version": 6,
-    "cmakeMinimumRequired": { "major": 3, "minor": 25 },
-
-    "configurePresets": [
-        {
-            "name": "_vs2022",
-            "hidden": true,
-            "generator": "Visual Studio 17 2022",
-            "binaryDir": "${sourceDir}/build/${presetName}",
-            "vendor": {
-                "microsoft.com/VisualStudioSettings/CMake/1.0": { "hostOS": [ "Windows" ] }
-            }
-        },
-        {
-            "name": "_vs2022-x86",
-            "hidden": true,
-            "inherits": "_vs2022",
-            "architecture": "Win32"
-        },
-        {
-            "name": "_vs2022-x64",
-            "hidden": true,
-            "inherits": "_vs2022",
-            "architecture": "x64"
-        },
-
-        {
-            "name": "gmod-x64",
-            "displayName": "Garry's Mod (x64, VS 2022)",
-            "inherits": "_vs2022-x64",
-            "cacheVariables": { "VOX_SDK": "gmod" }
-        },
-        {
-            "name": "gmod-x86",
-            "displayName": "Garry's Mod (x86, VS 2022)",
-            "inherits": "_vs2022-x86",
-            "cacheVariables": { "VOX_SDK": "gmod" }
-        },
-        {
-            "name": "sdk2013-mp",
-            "displayName": "Source SDK 2013 MP (x86, VS 2022)",
-            "inherits": "_vs2022-x86",
-            "cacheVariables": { "VOX_SDK": "sdk2013-mp" }
-        },
-        {
-            "name": "sdk2013-sp",
-            "displayName": "Source SDK 2013 SP (x86, VS 2022)",
-            "inherits": "_vs2022-x86",
-            "cacheVariables": { "VOX_SDK": "sdk2013-sp" }
-        },
-        {
-            "name": "asw",
-            "displayName": "Alien Swarm (x86, VS 2022)",
-            "inherits": "_vs2022-x86",
-            "cacheVariables": { "VOX_SDK": "asw" }
-        },
-
-        {
-            "name": "_ninja",
-            "hidden": true,
-            "generator": "Ninja Multi-Config",
-            "binaryDir": "${sourceDir}/build/${presetName}",
-            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
-        },
-        {
-            "name": "gmod-linux-x64",
-            "displayName": "Garry's Mod (Linux x64)",
-            "inherits": "_ninja",
-            "cacheVariables": { "VOX_SDK": "gmod" }
-        },
-        {
-            "name": "gmod-linux-x86",
-            "displayName": "Garry's Mod (Linux x86)",
-            "inherits": "_ninja",
-            "cacheVariables": {
-                "VOX_SDK": "gmod",
-                "CMAKE_C_FLAGS": "-m32",
-                "CMAKE_CXX_FLAGS": "-m32",
-                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                "CMAKE_SHARED_LINKER_FLAGS": "-m32"
-            }
-        },
-        {
-            "name": "sdk2013-mp-linux-x64",
-            "displayName": "Source SDK 2013 MP (Linux x64)",
-            "inherits": "_ninja",
-            "cacheVariables": { "VOX_SDK": "sdk2013-mp" }
-        },
-        {
-            "name": "sdk2013-mp-linux-x86",
-            "displayName": "Source SDK 2013 MP (Linux x86)",
-            "inherits": "_ninja",
-            "cacheVariables": {
-                "VOX_SDK": "sdk2013-mp",
-                "CMAKE_C_FLAGS": "-m32",
-                "CMAKE_CXX_FLAGS": "-m32",
-                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                "CMAKE_SHARED_LINKER_FLAGS": "-m32"
-            }
-        },
-        {
-            "name": "sdk2013-sp-linux",
-            "displayName": "Source SDK 2013 SP (Linux x86)",
-            "inherits": "_ninja",
-            "cacheVariables": {
-                "VOX_SDK": "sdk2013-sp",
-                "CMAKE_C_FLAGS": "-m32",
-                "CMAKE_CXX_FLAGS": "-m32",
-                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                "CMAKE_SHARED_LINKER_FLAGS": "-m32"
-            }
-        },
-        {
-            "name": "gmod-linux-x64-dedicated",
-            "displayName": "Garry's Mod Dedicated Server (Linux x64)",
-            "inherits": "_ninja",
-            "cacheVariables": { "VOX_SDK": "gmod", "VOX_DEDICATED": "ON" }
-        },
-        {
-            "name": "gmod-linux-x86-dedicated",
-            "displayName": "Garry's Mod Dedicated Server (Linux x86)",
-            "inherits": "_ninja",
-            "cacheVariables": {
-                "VOX_SDK": "gmod",
-                "VOX_DEDICATED": "ON",
-                "CMAKE_C_FLAGS": "-m32",
-                "CMAKE_CXX_FLAGS": "-m32",
-                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                "CMAKE_SHARED_LINKER_FLAGS": "-m32"
-            }
-        }
-    ],
-
-    "buildPresets": [
-        { "name": "gmod-x64-Debug",     "configurePreset": "gmod-x64",   "configuration": "Debug" },
-        { "name": "gmod-x64-Release",   "configurePreset": "gmod-x64",   "configuration": "Release" },
-        { "name": "gmod-x86-Debug",     "configurePreset": "gmod-x86",   "configuration": "Debug" },
-        { "name": "gmod-x86-Release",   "configurePreset": "gmod-x86",   "configuration": "Release" },
-        { "name": "sdk2013-mp-Debug",   "configurePreset": "sdk2013-mp", "configuration": "Debug" },
-        { "name": "sdk2013-mp-Release", "configurePreset": "sdk2013-mp", "configuration": "Release" },
-        { "name": "sdk2013-sp-Debug",   "configurePreset": "sdk2013-sp", "configuration": "Debug" },
-        { "name": "sdk2013-sp-Release", "configurePreset": "sdk2013-sp", "configuration": "Release" },
-        { "name": "asw-Debug",          "configurePreset": "asw",        "configuration": "Debug" },
-        { "name": "asw-Release",        "configurePreset": "asw",        "configuration": "Release" },
-        { "name": "gmod-linux-x64-Debug",   "configurePreset": "gmod-linux-x64", "configuration": "Debug" },
-        { "name": "gmod-linux-x64-Release", "configurePreset": "gmod-linux-x64", "configuration": "Release" },
-        { "name": "gmod-linux-x86-Debug",   "configurePreset": "gmod-linux-x86", "configuration": "Debug" },
-        { "name": "gmod-linux-x86-Release", "configurePreset": "gmod-linux-x86", "configuration": "Release" },
-        { "name": "sdk2013-mp-linux-x64-Debug",   "configurePreset": "sdk2013-mp-linux-x64", "configuration": "Debug" },
-        { "name": "sdk2013-mp-linux-x64-Release", "configurePreset": "sdk2013-mp-linux-x64", "configuration": "Release" },
-        { "name": "sdk2013-mp-linux-x86-Debug",   "configurePreset": "sdk2013-mp-linux-x86", "configuration": "Debug" },
-        { "name": "sdk2013-mp-linux-x86-Release", "configurePreset": "sdk2013-mp-linux-x86", "configuration": "Release" },
-        { "name": "sdk2013-sp-linux-Debug",   "configurePreset": "sdk2013-sp-linux", "configuration": "Debug" },
-        { "name": "sdk2013-sp-linux-Release", "configurePreset": "sdk2013-sp-linux", "configuration": "Release" },
-        { "name": "gmod-linux-x64-dedicated-Debug",   "configurePreset": "gmod-linux-x64-dedicated", "configuration": "Debug" },
-        { "name": "gmod-linux-x64-dedicated-Release", "configurePreset": "gmod-linux-x64-dedicated", "configuration": "Release" },
-        { "name": "gmod-linux-x86-dedicated-Debug",   "configurePreset": "gmod-linux-x86-dedicated", "configuration": "Debug" },
-        { "name": "gmod-linux-x86-dedicated-Release", "configurePreset": "gmod-linux-x86-dedicated", "configuration": "Release" }
-    ]
+	"version": 6,
+	"configurePresets": [
+		{
+			"name": "base",
+			"hidden": true,
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "windows-x64",
+			"inherits": "base",
+			"generator": "Visual Studio 18 2026",
+			"architecture": "x64",
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Windows"
+			}
+		},
+		{
+			"name": "linux-x64",
+			"inherits": "base",
+			"generator": "Ninja Multi-Config",
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Linux"
+			}
+		}
+	],
+	"buildPresets": [
+		{
+			"name": "windows-x64-release",
+			"configurePreset": "windows-x64",
+			"configuration": "Release"
+		},
+		{
+			"name": "windows-x64-debug",
+			"configurePreset": "windows-x64",
+			"configuration": "Debug"
+		},
+		{
+			"name": "linux-x64-release",
+			"configurePreset": "linux-x64",
+			"configuration": "Release"
+		},
+		{
+			"name": "linux-x64-debug",
+			"configurePreset": "linux-x64",
+			"configuration": "Debug"
+		}
+	]
 }

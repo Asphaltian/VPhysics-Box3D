@@ -4,6 +4,7 @@ add_library( vphysics SHARED
 	vphysics/create_interface.cpp
 	vphysics/parse_file.cpp
 	vphysics/physics.cpp
+	vphysics/physics_car_system.cpp
 	vphysics/physics_collide.cpp
 	vphysics/physics_collision.cpp
 	vphysics/physics_collision_set.cpp
@@ -22,6 +23,7 @@ add_library( vphysics SHARED
 	vphysics/physics_spring.cpp
 	vphysics/physics_surface_props.cpp
 	vphysics/physics_trace.cpp
+	vphysics/physics_vehicle_controller.cpp
 	vphysics/physics_virtual_mesh.cpp
 	vphysics/vphysics_key_parser.cpp
 	vphysics/vphysics_saverestore.cpp

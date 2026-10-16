@@ -10,6 +10,7 @@
 #include "physics_friction_snapshot.h"
 #include "physics_spring.h"
 #include "physics_surface_props.h"
+#include "physics_vehicle_controller.h"
 #include "vphysics_saverestore.h"
 
 #include "tier0/dbg.h"
@@ -33,9 +34,15 @@ static constexpr float LINEAR_DAMPING_EXPONENTIAL_LIMIT = 0.25f;
 static constexpr float ANGULAR_DAMPING_EXPONENTIAL_LIMIT = 0.5f;
 static constexpr float STEP_ANGULAR_CLAMP_SCALE = 0.9f;
 static constexpr float STEP_LINEAR_CLAMP_SCALE = 0.99f;
-static constexpr float REST_DISTANCE = 0.01f;
+static constexpr float REST_DISTANCE_SQUARED = 1e-4f;
+static constexpr float COARSE_REST_DISTANCE_SQUARED = 0.01f;
+static constexpr float REST_ROTATION = 2.5e-5f;
+static constexpr float COARSE_REST_ROTATION = 0.04f;
 static constexpr float REST_TIME = 0.3f;
-static constexpr float SLEEP_THRESHOLD = REST_DISTANCE / REST_TIME * IVP_TO_SOURCE;
+static constexpr float CREEP_TIME = 4.0f;
+static constexpr float REST_ANGULAR_SPEED = 2.3561945f / REST_TIME;
+static constexpr double FORCED_REST_AGE = 20.0;
+static constexpr float REST_DAMPING = 0.1f;
 static constexpr float MIN_STEP_INTERVAL = 1e-10f;
 static constexpr float MAX_INVERSE_STEP_INTERVAL = 1e10f;
 static constexpr float SHADOW_REST_SPEED_SQUARED = 1e-6f;
@@ -96,6 +103,16 @@ static b3SurfaceMaterial GetSurfaceMaterial( int materialIndex )
 	material.restitution = flElasticity;
 	material.userMaterialId = static_cast<uint64_t>( materialIndex );
 	return material;
+}
+
+static RealVec3_t RoundToFloat( RealVec3_t v )
+{
+	return ToReal( ToFloat( v ) );
+}
+
+static RealQuat_t RoundToFloat( RealQuat_t q )
+{
+	return { static_cast<float>( q.x ), static_cast<float>( q.y ), static_cast<float>( q.z ), static_cast<float>( q.w ) };
 }
 
 static b3Vec3 ClampToLength( b3Vec3 v, float flMaxLength )
@@ -183,6 +200,7 @@ CPhysicsObject *CPhysicsObject::CreatePolyObject( CPhysicsEnvironment *pEnvironm
 	CPhysicsObject *pObject = new CPhysicsObject( pEnvironment, *pParams, isStatic );
 	pObject->m_pCollide = pCollide;
 	pObject->ComputeMassProperties( *pParams, massCenter, unitInertia );
+	pObject->ComputeRestRadius( massCenter );
 	pObject->m_bAsleepSinceCreation = true;
 	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( origin ) ), AnglesToIVP( rotation ), massCenter, pParams->volume );
 	if ( !isStatic && pParams->dragCoefficient != 0.0f )
@@ -197,6 +215,7 @@ CPhysicsObject *CPhysicsObject::CreateSphereObject( CPhysicsEnvironment *pEnviro
 
 	CPhysicsObject *pObject = new CPhysicsObject( pEnvironment, *pParams, isStatic );
 	pObject->m_flSphereRadius = flRadius;
+	pObject->m_flRestRadius = flRadius;
 	pObject->ComputeMassProperties( *pParams, b3Vec3_zero, { flUnitInertia, flUnitInertia, flUnitInertia } );
 	const float flVolume = pParams->volume > 0.0f ? pParams->volume : ( ( radius * radius ) * radius ) * 4.0f * SPHERE_VOLUME_SCALE;
 	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( position ) ), AnglesToIVP( angles ), b3Vec3_zero, flVolume );
@@ -253,6 +272,10 @@ void CPhysicsObject::InitializeFromRecord( const objectparams_t &params, const v
 		massCenter = SourceToIVP( record.massCenterOverride );
 
 	ComputeMassProperties( params, massCenter, b3Vec3_zero );
+	if ( bSphere )
+		m_flRestRadius = m_flSphereRadius;
+	else
+		ComputeRestRadius( massCenter );
 	m_flMass = record.mass;
 	m_Inertia = Vector( std::fabs( record.rotInertia.x ), std::fabs( record.rotInertia.y ), std::fabs( record.rotInertia.z ) );
 	UpdateInverseMass();
@@ -350,7 +373,7 @@ void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex
 	bodyDef.position = transform.p;
 	bodyDef.rotation = transform.q;
 	bodyDef.isAwake = false;
-	bodyDef.sleepThreshold = SLEEP_THRESHOLD;
+	bodyDef.gravityScale = 0.0f;
 	bodyDef.userData = this;
 	m_Body = b3CreateBody( m_pEnvironment->GetWorld(), &bodyDef );
 
@@ -465,16 +488,27 @@ b3Vec3 CPhysicsObject::GetBodyAngularVelocity( b3Vec3 coreAngular ) const
 void CPhysicsObject::FlushVelocity()
 {
 	m_bVelocityFlushQueued = false;
+	const bool bContactGravity = m_bGravityApplied && !m_ContactKeys.empty();
+	SetContactGravity( bContactGravity );
 	if ( m_bCoreVelocityValid )
 	{
 		b3Vec3 velocity = IVPToSource( m_CoreVelocity );
-		if ( m_bGravityApplied )
+		if ( bContactGravity )
 			velocity = b3MulSub( velocity, m_pEnvironment->GetSimulationTimestep(), ToBox3D( m_pEnvironment->GetGravityVector() ) );
 		b3Body_SetLinearVelocity( m_Body, velocity );
 	}
 	if ( m_bCoreAngularVelocityValid )
 		b3Body_SetAngularVelocity( m_Body, GetBodyAngularVelocity( m_CoreAngularVelocity ) );
 	m_bGravityApplied = false;
+}
+
+void CPhysicsObject::SetContactGravity( bool bContactGravity )
+{
+	if ( bContactGravity == m_bContactGravity )
+		return;
+
+	m_bContactGravity = bContactGravity;
+	b3Body_SetGravityScale( m_Body, bContactGravity ? 1.0f : 0.0f );
 }
 
 void CPhysicsObject::CapturePreStepVelocity( uint32_t nStepCount )
@@ -597,6 +631,8 @@ void CPhysicsObject::StepUp( float height )
 
 void CPhysicsObject::RebuildCoreMatrix( double flTime )
 {
+	m_PreviousCorePosition = m_CorePosition;
+	m_PreviousRotation = m_LastRotation;
 	const real_t flElapsed = static_cast<float>( flTime - m_flLastStepTime );
 	m_CorePosition = {
 		m_CorePosition.x + flElapsed * real_t( m_ImplicitVelocity.x ),
@@ -646,10 +682,139 @@ CPhysicsObject::SleepState_t CPhysicsObject::NotifyWake()
 void CPhysicsObject::ResetClock( double flLastStepTime )
 {
 	m_flLastStepTime -= flLastStepTime;
+	m_flFineRestTime -= flLastStepTime;
+	m_flCoarseRestTime -= flLastStepTime;
+}
+
+void CPhysicsObject::ComputeRestRadius( b3Vec3 massCenter )
+{
+	const CPhysCollideCompactSurface *pSurface = m_pCollide ? m_pCollide->GetCompactSurface() : nullptr;
+	if ( pSurface )
+		m_flRestRadius = pSurface->GetUpperLimitRadius() + std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
+}
+
+real_t CPhysicsObject::GetRotationDistance( RealQuat_t a, RealQuat_t b ) const
+{
+	const real_t flDot = ( ( a.x * b.x + a.y * b.y ) + a.z * b.z ) + a.w * b.w;
+	return ( ( real_t( 2 ) * ( real_t( 1 ) - flDot * flDot ) ) * m_flRestRadius ) * m_flRestRadius;
+}
+
+void CPhysicsObject::GetRestPose( bool bInStep, RealVec3_t &position, RealQuat_t &nextRotation, RealQuat_t &lastRotation ) const
+{
+	position = bInStep ? m_PreviousCorePosition : m_CorePosition;
+	nextRotation = m_NextRotation;
+	lastRotation = bInStep ? m_PreviousRotation : m_LastRotation;
+}
+
+void CPhysicsObject::Revive( double flTime, uint32_t nSequence )
+{
+	m_FineRestPosition = RoundToFloat( m_CorePosition );
+	m_FineRestRotation = RoundToFloat( m_NextRotation );
+	m_CoarseRestPosition = m_FineRestPosition;
+	m_CoarseRestRotation = m_FineRestRotation;
+	m_flFineRestTime = flTime;
+	m_flCoarseRestTime = flTime;
+	m_nRestState = REST_MOVING;
+	m_nReviveSequence = nSequence;
+}
+
+void CPhysicsObject::ResetRestTimers( double flTime )
+{
+	m_flFineRestTime = flTime;
+	m_flCoarseRestTime = flTime;
+}
+
+CPhysicsObject::RestState_t CPhysicsObject::EvaluateRest( double flTime, bool bInStep, bool &bMoved, bool &bCoarseMoved ) const
+{
+	RealVec3_t position;
+	RealQuat_t nextRotation, lastRotation;
+	GetRestPose( bInStep, position, nextRotation, lastRotation );
+
+	bMoved = LengthSquared( position - m_FineRestPosition ) > REST_DISTANCE_SQUARED || GetRotationDistance( nextRotation, m_FineRestRotation ) > REST_ROTATION;
+	bCoarseMoved = false;
+	if ( !bMoved )
+	{
+		if ( static_cast<float>( flTime - m_flFineRestTime ) <= REST_TIME )
+			return REST_RESTING;
+
+		bMoved = b3LengthSquared( GetCoreAngularVelocity() ) > REST_ANGULAR_SPEED * REST_ANGULAR_SPEED && GetRotationDistance( nextRotation, RoundToFloat( lastRotation ) ) > REST_ROTATION;
+		if ( !bMoved )
+			return REST_READY;
+	}
+
+	bCoarseMoved = LengthSquared( position - m_CoarseRestPosition ) > COARSE_REST_DISTANCE_SQUARED || GetRotationDistance( lastRotation, m_CoarseRestRotation ) > COARSE_REST_ROTATION;
+	if ( bCoarseMoved )
+		return REST_MOVING;
+	return static_cast<float>( flTime - m_flCoarseRestTime ) > CREEP_TIME ? REST_READY : REST_MOVING;
+}
+
+CPhysicsObject::RestState_t CPhysicsObject::CheckRest( double flTime, bool bInStep )
+{
+	bool bMoved, bCoarseMoved;
+	m_nRestState = EvaluateRest( flTime, bInStep, bMoved, bCoarseMoved );
+	if ( !bMoved )
+		return m_nRestState;
+
+	RealVec3_t position;
+	RealQuat_t nextRotation, lastRotation;
+	GetRestPose( bInStep, position, nextRotation, lastRotation );
+	m_FineRestRotation = RoundToFloat( nextRotation );
+	m_FineRestPosition = RoundToFloat( position );
+	m_flFineRestTime = flTime;
+	if ( bCoarseMoved )
+	{
+		m_CoarseRestRotation = RoundToFloat( lastRotation );
+		m_CoarseRestPosition = RoundToFloat( position );
+		m_flCoarseRestTime = flTime;
+	}
+	return m_nRestState;
+}
+
+bool CPhysicsObject::IsReadyToRest( double flTime ) const
+{
+	bool bMoved, bCoarseMoved;
+	return EvaluateRest( flTime, true, bMoved, bCoarseMoved ) == REST_READY;
+}
+
+void CPhysicsObject::PrepareForcedRest( double flTime )
+{
+	m_FineRestPosition = RoundToFloat( m_CorePosition );
+	m_FineRestRotation = RoundToFloat( m_NextRotation );
+	m_CoarseRestPosition = m_FineRestPosition;
+	m_CoarseRestRotation = RoundToFloat( m_LastRotation );
+	m_flFineRestTime = flTime - FORCED_REST_AGE;
+	m_flCoarseRestTime = flTime - FORCED_REST_AGE;
+}
+
+void CPhysicsObject::Freeze( bool bInStep )
+{
+	RealVec3_t position;
+	RealQuat_t nextRotation, lastRotation;
+	GetRestPose( bInStep, position, nextRotation, lastRotation );
+
+	m_PendingVelocity = b3Vec3_zero;
+	m_PendingAngularVelocity = b3Vec3_zero;
+	InvalidateVelocityCache();
+	b3Body_SetLinearVelocity( m_Body, b3Vec3_zero );
+	b3Body_SetAngularVelocity( m_Body, b3Vec3_zero );
+
+	m_ImplicitVelocity = b3Vec3_zero;
+	m_CorePosition = position;
+	m_LastRotation = lastRotation;
+	m_NextRotation = lastRotation;
+	m_CoreRotation = QuatToMatrix( lastRotation );
+	const b3Transform transform = GetBodyTransform();
+	b3Body_SetTransform( m_Body, transform.p, transform.q );
+
+	SetContactGravity( false );
+	m_nRestState = REST_FROZEN;
+	m_nSleepState = m_nSleepState == AWAKE ? FELL_ASLEEP : ASLEEP;
 }
 
 CPhysicsObject::~CPhysicsObject()
 {
+	if ( m_pVehicleController )
+		m_pVehicleController->ObjectDestroyed( this );
 	RemoveShadowController();
 	m_nCallbackFlags = 0;
 	m_pGameData = nullptr;
@@ -719,10 +884,13 @@ void CPhysicsObject::EnableGravity( bool enable )
 		return;
 
 	if ( enable )
+	{
 		AttachController( m_pEnvironment->GetGravityController() );
-	else
-		DetachController( m_pEnvironment->GetGravityController() );
-	b3Body_SetGravityScale( m_Body, enable ? 1.0f : 0.0f );
+		return;
+	}
+
+	DetachController( m_pEnvironment->GetGravityController() );
+	SetContactGravity( false );
 }
 
 void CPhysicsObject::AttachController( IController *pController )
@@ -842,6 +1010,8 @@ void CPhysicsObject::EnableMotion( bool enable )
 
 void CPhysicsObject::Wake()
 {
+	if ( m_nRestState != REST_FROZEN )
+		ResetRestTimers( m_pEnvironment->GetCurrentTime() );
 	b3Body_SetAwake( m_Body, true );
 	m_pEnvironment->NotifyWoken( this );
 }
@@ -851,9 +1021,7 @@ void CPhysicsObject::Sleep()
 	if ( m_bStatic )
 		return;
 
-	m_pEnvironment->RemoveWoken( this );
-	b3Body_SetAwake( m_Body, false );
-	m_pEnvironment->SyncSleepingObjects();
+	m_pEnvironment->ForceRest( this );
 }
 
 void CPhysicsObject::SetMass( float mass )
@@ -1363,19 +1531,39 @@ void CPhysicsObject::ApplyImpulse( RealVec3_t worldPosition, b3Vec3 impulse )
 	QueuePendingVelocity();
 }
 
+void CPhysicsObject::ApplyDirectImpulse( RealVec3_t worldPosition, b3Vec3 impulse )
+{
+	const b3Vec3 offset = ToFloat( worldPosition - m_CorePosition );
+	SetCoreAngularVelocity( b3Add( GetCoreAngularVelocity(), b3Mul( IVPToCore( b3Cross( offset, impulse ) ), GetCoreInverseInertia() ) ) );
+	SetCoreVelocity( b3MulAdd( GetCoreVelocity(), m_flInvMass, impulse ) );
+}
+
 void CPhysicsObject::AddPendingAngularVelocity( b3Vec3 change )
 {
 	m_PendingAngularVelocity = b3Add( m_PendingAngularVelocity, change );
 	QueuePendingVelocity();
 }
 
-void CPhysicsObject::ApplyGravity( float flTimestep )
+void CPhysicsObject::SetPendingVelocity( b3Vec3 velocity )
+{
+	m_PendingVelocity = velocity;
+	QueuePendingVelocity();
+}
+
+void CPhysicsObject::SetPendingAngularVelocity( b3Vec3 angular )
+{
+	m_PendingAngularVelocity = angular;
+	QueuePendingVelocity();
+}
+
+void CPhysicsObject::ApplyGravity( float flTimestep, RealVec3_t gravity, bool bWorldGravity )
 {
 	if ( !m_bMotionEnabled )
 		return;
 
-	const real_t b = real_t( flTimestep ) * m_flSpeedDamping;
-	const float a = flTimestep * m_flRotDamping;
+	const float flRestDamping = m_nRestState >= REST_RESTING ? REST_DAMPING : 0.0f;
+	const real_t b = real_t( flTimestep ) * ( m_flSpeedDamping + flRestDamping );
+	const float a = flTimestep * ( m_flRotDamping + flRestDamping );
 	b3Vec3 angular = GetCoreAngularVelocity();
 	if ( ( a * a + a * a ) + a * a < ANGULAR_DAMPING_EXPONENTIAL_LIMIT )
 	{
@@ -1395,10 +1583,8 @@ void CPhysicsObject::ApplyGravity( float flTimestep )
 	m_PendingVelocity = b3Vec3_zero;
 	m_PendingAngularVelocity = b3Vec3_zero;
 
-	const RealVec3_t gravity = m_pEnvironment->GetIVPGravity();
-	damped = { flTimestep * static_cast<float>( gravity.x ) + damped.x, flTimestep * static_cast<float>( gravity.y ) + damped.y, flTimestep * static_cast<float>( gravity.z ) + damped.z };
-	SetCoreVelocity( damped );
-	m_bGravityApplied = true;
+	SetCoreVelocity( { flTimestep * static_cast<float>( gravity.x ) + damped.x, flTimestep * static_cast<float>( gravity.y ) + damped.y, flTimestep * static_cast<float>( gravity.z ) + damped.z } );
+	m_bGravityApplied = bWorldGravity;
 }
 
 static b3Vec3 ScaleDrag( b3Vec3 v, float k )
@@ -1426,6 +1612,9 @@ void CPhysicsObject::ApplyDrag( float flTimestep, float flAirDensity )
 
 void CPhysicsObject::ClampStepVelocity()
 {
+	if ( m_bCarWheel )
+		return;
+
 	const float flInverseTimestep = m_pEnvironment->GetInverseTimestep();
 	const float flRotationLimit = m_pEnvironment->GetMaxRotationPerStep();
 	const float flMaxAngularSpeed = flInverseTimestep * flRotationLimit;

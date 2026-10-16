@@ -18,6 +18,7 @@ class CPhysCollide;
 class CPhysicsConstraint;
 class CPhysicsEnvironment;
 class CPhysicsSpring;
+class CPhysicsVehicleController;
 class IController;
 struct vphysics_save_cphysicsobject_t;
 
@@ -29,6 +30,14 @@ public:
 		AWAKE = 0,
 		FELL_ASLEEP = 1,
 		ASLEEP = 2,
+	};
+
+	enum RestState_t : unsigned char
+	{
+		REST_MOVING = 1,
+		REST_RESTING = 2,
+		REST_READY = 3,
+		REST_FROZEN = 8,
 	};
 
 	static CPhysicsObject *CreatePolyObject( CPhysicsEnvironment *pEnvironment, const CPhysCollide *pCollide, int materialIndex, const Vector &position, const QAngle &angles, objectparams_t *pParams, bool isStatic );
@@ -169,6 +178,10 @@ public:
 
 	void SetShadowController( IPhysicsShadowController *pShadow ) { m_pShadow = pShadow; }
 
+	void SetVehicleController( CPhysicsVehicleController *pController ) { m_pVehicleController = pController; }
+
+	void SetCarWheel() { m_bCarWheel = true; }
+
 	void SetTouchedDynamic() { m_bHasTouchedDynamic = true; }
 
 	void ClearAsleepSinceCreation() { m_bAsleepSinceCreation = false; }
@@ -213,6 +226,27 @@ public:
 	SleepState_t NotifyWake();
 	void ResetClock( double flLastStepTime );
 
+	double GetLastStepTime() const { return m_flLastStepTime; }
+
+	RestState_t GetRestState() const { return m_nRestState; }
+
+	bool IsRestFast() const { return m_bRestFast; }
+
+	void SetRestFast( bool bFast ) { m_bRestFast = bFast; }
+
+	uint32_t GetReviveSequence() const { return m_nReviveSequence; }
+
+	uint32_t GetUnitStamp() const { return m_nUnitStamp; }
+
+	void SetUnitStamp( uint32_t nStamp ) { m_nUnitStamp = nStamp; }
+
+	void Revive( double flTime, uint32_t nSequence );
+	void ResetRestTimers( double flTime );
+	RestState_t CheckRest( double flTime, bool bInStep );
+	bool IsReadyToRest( double flTime ) const;
+	void PrepareForcedRest( double flTime );
+	void Freeze( bool bInStep );
+
 	bool IsQueuedAsWoken() const { return m_bQueuedAsWoken; }
 
 	void SetQueuedAsWoken( bool bQueued ) { m_bQueuedAsWoken = bQueued; }
@@ -226,8 +260,9 @@ public:
 	void ApplyPendingVelocity();
 	void FlushVelocity();
 	void ApplyImpulse( RealVec3_t worldPosition, b3Vec3 impulse );
+	void ApplyDirectImpulse( RealVec3_t worldPosition, b3Vec3 impulse );
 	void AddPendingAngularVelocity( b3Vec3 change );
-	void ApplyGravity( float flTimestep );
+	void ApplyGravity( float flTimestep, RealVec3_t gravity, bool bWorldGravity );
 	void ApplyDrag( float flTimestep, float flAirDensity );
 	void ClampStepVelocity();
 
@@ -284,6 +319,14 @@ public:
 
 	b3Vec3 GetPendingVelocity() const { return m_PendingVelocity; }
 
+	void SetPendingVelocity( b3Vec3 velocity );
+
+	b3Vec3 GetPendingAngularVelocity() const { return m_PendingAngularVelocity; }
+
+	void SetPendingAngularVelocity( b3Vec3 angular );
+
+	b3Vec3 GetCoreImplicitVelocity() const { return m_ImplicitVelocity; }
+
 	b3Vec3 GetShift() const { return m_Shift; }
 
 	b3Vec3 GetReportedVelocity() const;
@@ -304,6 +347,11 @@ private:
 	void Initialize( const objectparams_t &params, int materialIndex, RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter, float flVolume );
 	void InitializeFromRecord( const objectparams_t &params, const vphysics_save_cphysicsobject_t &record, void *pGameData );
 	void InitializePose( RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter );
+	void ComputeRestRadius( b3Vec3 massCenter );
+	void SetContactGravity( bool bContactGravity );
+	real_t GetRotationDistance( RealQuat_t a, RealQuat_t b ) const;
+	void GetRestPose( bool bInStep, RealVec3_t &position, RealQuat_t &nextRotation, RealQuat_t &lastRotation ) const;
+	RestState_t EvaluateRest( double flTime, bool bInStep, bool &bMoved, bool &bCoarseMoved ) const;
 	RealVec3_t GetCorePositionAt( double flTime ) const;
 	RealQuat_t GetRotationAt( double flTime ) const;
 	b3Transform GetBodyTransform() const;
@@ -347,6 +395,7 @@ private:
 	void *m_pGameData = nullptr;
 	IPhysicsShadowController *m_pShadow = nullptr;
 	IPhysicsFluidController *m_pFluidController = nullptr;
+	CPhysicsVehicleController *m_pVehicleController = nullptr;
 	std::string m_Name;
 
 	b3Vec3 m_PendingVelocity = b3Vec3_zero;
@@ -387,6 +436,18 @@ private:
 	unsigned short m_nGameFlags = 0;
 	unsigned short m_nCallbackFlags = 0;
 	unsigned short m_nActiveIndex = 0xFFFF;
+	RestState_t m_nRestState = REST_FROZEN;
+	uint32_t m_nReviveSequence = 0;
+	uint32_t m_nUnitStamp = 0;
+	RealVec3_t m_PreviousCorePosition = {};
+	RealQuat_t m_PreviousRotation = { 0, 0, 0, 1 };
+	RealVec3_t m_FineRestPosition = {};
+	RealQuat_t m_FineRestRotation = { 0, 0, 0, 1 };
+	RealVec3_t m_CoarseRestPosition = {};
+	RealQuat_t m_CoarseRestRotation = { 0, 0, 0, 1 };
+	double m_flFineRestTime = 0.0;
+	double m_flCoarseRestTime = 0.0;
+	float m_flRestRadius = 0.0f;
 	SleepState_t m_nSleepState = ASLEEP;
 
 	bool m_bStatic = false;
@@ -404,6 +465,9 @@ private:
 	bool m_bReportPreStepVelocity = false;
 	bool m_bAsleepSinceCreation = false;
 	bool m_bHasName = false;
-	bool m_bGravityApplied = false;
 	bool m_bHasTouchedDynamic = false;
+	bool m_bCarWheel = false;
+	bool m_bGravityApplied = false;
+	bool m_bContactGravity = false;
+	bool m_bRestFast = false;
 };

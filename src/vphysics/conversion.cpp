@@ -51,7 +51,7 @@ static __m128 Sine( __m128 x )
 	return _mm_load_ps( outputs );
 }
 
-void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 &up )
+static void GetAngleSinCos( const QAngle &angles, float &sy, float &cy, float &sp, float &cp, float &sr, float &cr )
 {
 	const float flYaw = angles.y * DEGREES_TO_RADIANS;
 	const float flPitch = angles.x * DEGREES_TO_RADIANS;
@@ -59,14 +59,14 @@ void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 
 
 	alignas( 16 ) float yawPitch[4];
 	_mm_store_ps( yawPitch, Sine( _mm_add_ps( _mm_setr_ps( flYaw, flYaw, flPitch, flPitch ), _mm_setr_ps( 0.0f, HALF_PI, 0.0f, HALF_PI ) ) ) );
-	const float sy = yawPitch[0];
-	const float cy = yawPitch[1];
-	const float sp = yawPitch[2];
-	const float cp = yawPitch[3];
+	sy = yawPitch[0];
+	cy = yawPitch[1];
+	sp = yawPitch[2];
+	cp = yawPitch[3];
 
 	const float flAbsoluteRoll = std::fabs( flRoll );
-	float sr = flRoll;
-	float cr = 1.0f - ( flAbsoluteRoll * flAbsoluteRoll ) * 0.5f;
+	sr = flRoll;
+	cr = 1.0f - ( flAbsoluteRoll * flAbsoluteRoll ) * 0.5f;
 	if ( !( flAbsoluteRoll < SMALL_ROLL_ANGLE ) )
 	{
 		alignas( 16 ) float roll[4];
@@ -74,10 +74,47 @@ void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 
 		sr = roll[0];
 		cr = roll[1];
 	}
+}
 
+void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 &up )
+{
+	float sy, cy, sp, cp, sr, cr;
+	GetAngleSinCos( angles, sy, cy, sp, cp, sr, cr );
 	forward = { cp * cy, cp * sy, -sp };
 	right = { cr * sy - ( sr * sp ) * cy, -( cr * cy ) - ( sr * sp ) * sy, -( sr * cp ) };
 	up = { ( cr * sp ) * cy + sr * sy, ( cr * sp ) * sy - sr * cy, cr * cp };
+}
+
+void AngleMatrix( const QAngle &angles, const Vector &position, matrix3x4_t &matrix )
+{
+	float sy, cy, sp, cp, sr, cr;
+	GetAngleSinCos( angles, sy, cy, sp, cp, sr, cr );
+
+	matrix[0][0] = cp * cy;
+	matrix[1][0] = cp * sy;
+	matrix[2][0] = -sp;
+
+	const float crcy = cr * cy;
+	const float crsy = cr * sy;
+	const float srcy = sr * cy;
+	const float srsy = sr * sy;
+	matrix[0][1] = sp * srcy - crsy;
+	matrix[1][1] = sp * srsy + crcy;
+	matrix[2][1] = sr * cp;
+
+	matrix[0][2] = sp * crcy + srsy;
+	matrix[1][2] = sp * crsy - srcy;
+	matrix[2][2] = cr * cp;
+
+	matrix[0][3] = position.x;
+	matrix[1][3] = position.y;
+	matrix[2][3] = position.z;
+}
+
+void VectorTransform( const float *in1, const matrix3x4_t &in2, float *out )
+{
+	for ( int i = 0; i < 3; ++i )
+		out[i] = ( ( in1[0] * in2[i][0] + in1[1] * in2[i][1] ) + in1[2] * in2[i][2] ) + in2[i][3];
 }
 
 RealQuat_t AnglesToIVP( const QAngle &angles )

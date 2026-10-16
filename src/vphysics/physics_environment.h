@@ -22,6 +22,28 @@ class CPhysicsObject;
 class CPhysicsFluidController;
 class CPhysicsPlayerController;
 
+class CCollisionData final : public IPhysicsCollisionData
+{
+public:
+	CCollisionData( const Vector &normal, const Vector &point, const Vector &speed )
+	: m_Normal( normal )
+	, m_Point( point )
+	, m_Speed( speed )
+	{
+	}
+
+	void GetSurfaceNormal( Vector &out ) override { out = m_Normal; }
+
+	void GetContactPoint( Vector &out ) override { out = m_Point; }
+
+	void GetContactSpeed( Vector &out ) override { out = m_Speed; }
+
+private:
+	Vector m_Normal;
+	Vector m_Point;
+	Vector m_Speed;
+};
+
 class CPhysicsEnvironment final : public IPhysicsEnvironment
 {
 public:
@@ -152,6 +174,8 @@ public:
 
 	IPhysicsConstraintEvent *GetConstraintEventHandler() const { return m_pConstraintEvents; }
 
+	IPhysicsCollisionEvent *GetCollisionEventHandler() const { return m_pCollisionEvents; }
+
 	void DebugCheckContacts() override;
 
 	b3WorldId GetWorld() const { return m_World; }
@@ -182,6 +206,7 @@ public:
 	void NotifyWoken( CPhysicsObject *pObject );
 	void RemoveWoken( CPhysicsObject *pObject );
 	void SyncSleepingObjects();
+	void ForceRest( CPhysicsObject *pObject );
 	void RemovePlayerGround( const CPhysicsObject *pObject );
 
 	bool IsCollisionAllowed( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
@@ -199,9 +224,12 @@ public:
 	bool RefreshFrictionContact( const CPhysicsObject *pObject, uint64_t nSequence, Vector &point, Vector &normal ) const;
 	const std::vector<ContactNormal_t> &GetContactNormals( const CPhysicsObject *pObject );
 	bool GetContactPoint( const CPhysicsObject *pObject, Vector *pContactPoint, IPhysicsObject **ppContactObject ) const;
+	bool HasFrictionContact( const CPhysicsObject *pObject ) const;
+	bool GetStrongestContact( const CPhysicsObject *pObject, Vector &point, int &nSurface ) const;
 
 private:
 	static constexpr int SUBSTEP_COUNT = 4;
+	static constexpr short SLEEP_COUNTDOWN = 10;
 
 	struct FrictionContact_t
 	{
@@ -279,6 +307,14 @@ private:
 		int m_nContactCount;
 	};
 
+	struct SimulationUnit_t
+	{
+		int m_nFirst;
+		int m_nCount;
+		uint32_t m_nSequence;
+		bool m_bCheckRest;
+	};
+
 	struct FrictionDispatch_t
 	{
 		CPhysicsObject *m_pObject;
@@ -292,6 +328,10 @@ private:
 	void RemoveActiveObject( CPhysicsObject *pObject );
 	void Step( double flTime );
 	void SweepSleepingObjects();
+	void BuildSimulationUnits();
+	void UpdateRestTimers();
+	void CheckSimulationUnits();
+	void FreezeIsland( const SimulationUnit_t &unit );
 	void ResolvePendingFilterPairs();
 	void ProcessJointEvents();
 	void RestoreObject( const physrestoreparams_t &params );
@@ -336,6 +376,10 @@ private:
 	std::vector<CPhysicsObject *> m_WokenObjects;
 	std::vector<CPhysicsObject *> m_SimulatedObjects;
 	std::vector<CPhysicsObject *> m_SteppedObjects;
+	std::vector<CPhysicsObject *> m_FrozenObjects;
+	std::vector<CPhysicsObject *> m_UnitObjects;
+	std::vector<CPhysicsObject *> m_IslandObjects;
+	std::vector<SimulationUnit_t> m_SimulationUnits;
 	CGravityController m_GravityController;
 	CDragController m_DragController;
 	std::vector<CPhysicsFluidController *> m_FluidControllers;
@@ -364,6 +408,9 @@ private:
 	uint64_t m_nContactSequence = 0;
 	uint32_t m_nLastObjectId = 0;
 	uint32_t m_nStepCount = 0;
+	uint32_t m_nReviveSequence = 0;
+	uint32_t m_nUnitStamp = 0;
+	short m_nSleepCountdown = SLEEP_COUNTDOWN;
 	float m_flLastFrictionTime = 0.0f;
 	vcollisionevent_t m_CollisionEvent = {};
 

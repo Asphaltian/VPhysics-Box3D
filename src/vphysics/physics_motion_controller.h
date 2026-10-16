@@ -7,6 +7,8 @@
 
 #include <vector>
 
+struct vphysics_save_motioncontroller_t;
+
 class CPhysicsMotionController final : public IPhysicsMotionController, public IController
 {
 public:
@@ -31,6 +33,9 @@ public:
 
 	void Simulate( CPhysicsObject *pObject, float flTimestep ) override;
 	void ObjectDestroyed( CPhysicsObject *pObject ) override;
+
+	void WriteRecord( vphysics_save_motioncontroller_t &record ) const;
+	void ReadRecord( const vphysics_save_motioncontroller_t &record );
 
 private:
 	IMotionEvent *m_pHandler;

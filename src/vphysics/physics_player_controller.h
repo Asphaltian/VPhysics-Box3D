@@ -53,6 +53,8 @@ public:
 	void ObjectDestroyed( CPhysicsObject *pObject ) override;
 
 	void GroundDestroyed( const CPhysicsObject *pObject );
+	void DetachFromObject();
+	void AttachToObject();
 
 private:
 	void AttachObject( CPhysicsObject *pObject );

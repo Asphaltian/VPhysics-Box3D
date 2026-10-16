@@ -32,8 +32,7 @@ void CPhysicsPlayerController::AttachObject( CPhysicsObject *pObject )
 	pObject->EnableDrag( false );
 	m_flSavedRotDamping = pObject->GetRotDamping();
 	pObject->SetRotDamping( PLAYER_ROT_DAMPING );
-	pObject->AttachController( this );
-	pObject->SetCallbackFlags( pObject->GetCallbackFlags() | CALLBACK_IS_PLAYER_CONTROLLER );
+	AttachToObject();
 }
 
 void CPhysicsPlayerController::DetachObject()
@@ -42,10 +41,21 @@ void CPhysicsPlayerController::DetachObject()
 		return;
 
 	m_pObject->SetRotDamping( m_flSavedRotDamping );
+	DetachFromObject();
+	m_pObject = nullptr;
+}
+
+void CPhysicsPlayerController::DetachFromObject()
+{
 	m_pObject->SetCallbackFlags( m_pObject->GetCallbackFlags() & ~CALLBACK_IS_PLAYER_CONTROLLER );
 	m_pObject->DetachController( this );
-	m_pObject = nullptr;
 	m_pGround = nullptr;
+}
+
+void CPhysicsPlayerController::AttachToObject()
+{
+	m_pObject->SetCallbackFlags( m_pObject->GetCallbackFlags() | CALLBACK_IS_PLAYER_CONTROLLER );
+	m_pObject->AttachController( this );
 }
 
 void CPhysicsPlayerController::Update( const Vector &position, const Vector &velocity, float secondsToArrival, bool, IPhysicsObject *ground )

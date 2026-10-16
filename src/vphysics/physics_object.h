@@ -15,8 +15,11 @@
 #include <vector>
 
 class CPhysCollide;
+class CPhysicsConstraint;
 class CPhysicsEnvironment;
+class CPhysicsSpring;
 class IController;
+struct vphysics_save_cphysicsobject_t;
 
 class CPhysicsObject final : public IPhysicsObject
 {
@@ -30,6 +33,7 @@ public:
 
 	static CPhysicsObject *CreatePolyObject( CPhysicsEnvironment *pEnvironment, const CPhysCollide *pCollide, int materialIndex, const Vector &position, const QAngle &angles, objectparams_t *pParams, bool isStatic );
 	static CPhysicsObject *CreateSphereObject( CPhysicsEnvironment *pEnvironment, float radius, int materialIndex, const Vector &position, const QAngle &angles, objectparams_t *pParams, bool isStatic );
+	static CPhysicsObject *CreateFromRecord( CPhysicsEnvironment *pEnvironment, const vphysics_save_cphysicsobject_t &record, void *pGameData );
 
 	~CPhysicsObject() override;
 
@@ -148,7 +152,7 @@ public:
 
 	const CPhysCollide *GetCollide() const override { return m_pCollide; }
 
-	const char *GetName() const override { return m_Name.c_str(); }
+	const char *GetName() const override { return m_bHasName ? m_Name.c_str() : nullptr; }
 
 	void BecomeTrigger() override;
 	void RemoveTrigger() override;
@@ -159,6 +163,15 @@ public:
 	void DestroyFrictionSnapshot( IPhysicsFrictionSnapshot *pSnapshot ) override;
 
 	void OutputDebugInfo() const override;
+
+	void WriteRecord( vphysics_save_cphysicsobject_t &record ) const;
+	void MoveToEnvironment( CPhysicsEnvironment *pDestination, const vphysics_save_cphysicsobject_t &record, void *pGameData );
+
+	void SetShadowController( IPhysicsShadowController *pShadow ) { m_pShadow = pShadow; }
+
+	void SetTouchedDynamic() { m_bHasTouchedDynamic = true; }
+
+	void ClearAsleepSinceCreation() { m_bAsleepSinceCreation = false; }
 
 	b3BodyId GetBody() const { return m_Body; }
 
@@ -220,12 +233,18 @@ public:
 
 	void AttachController( IController *pController );
 	void DetachController( IController *pController );
+	void AttachConstraint( CPhysicsConstraint *pConstraint );
+	void DetachConstraint( CPhysicsConstraint *pConstraint );
+	void AttachSpring( CPhysicsSpring *pSpring );
+	void DetachSpring( CPhysicsSpring *pSpring );
 
 	std::vector<uint64_t> &GetContactKeys() { return m_ContactKeys; }
 
 	const std::vector<uint64_t> &GetContactKeys() const { return m_ContactKeys; }
 
-	void RunControllers( float flTimestep );
+	void ResetControllerCursor() { m_nControllerCursor = static_cast<int>( m_ControllerOrder.size() ) - 1; }
+
+	void RunControllers( float flTimestep, int nPriorityFloor );
 
 	struct ShadowControl_t
 	{
@@ -265,6 +284,8 @@ public:
 
 	b3Vec3 GetPendingVelocity() const { return m_PendingVelocity; }
 
+	b3Vec3 GetShift() const { return m_Shift; }
+
 	b3Vec3 GetReportedVelocity() const;
 	b3Vec3 GetReportedAngularVelocity() const;
 
@@ -281,6 +302,7 @@ private:
 	CPhysicsObject( CPhysicsEnvironment *pEnvironment, const objectparams_t &params, bool isStatic );
 
 	void Initialize( const objectparams_t &params, int materialIndex, RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter, float flVolume );
+	void InitializeFromRecord( const objectparams_t &params, const vphysics_save_cphysicsobject_t &record, void *pGameData );
 	void InitializePose( RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter );
 	RealVec3_t GetCorePositionAt( double flTime ) const;
 	RealQuat_t GetRotationAt( double flTime ) const;
@@ -291,6 +313,7 @@ private:
 	float GetLinearDrag( b3Vec3 coreDirection ) const;
 	float GetAngularDrag( b3Vec3 coreAxis ) const;
 	b3Vec3 GetCoreOffset( const Vector &worldPosition ) const;
+	b3Vec3 GetBodyAngularVelocity( b3Vec3 coreAngular ) const;
 	void ComputeMassProperties( const objectparams_t &params, b3Vec3 massCenter, b3Vec3 unitInertia );
 	void CreateShapes( bool bSensor );
 	void DestroyShapes();
@@ -313,10 +336,13 @@ private:
 	b3AABB m_FilterBounds = {};
 	std::vector<IController *> m_Controllers;
 	std::vector<IController *> m_ControllerOrder;
+	std::vector<CPhysicsConstraint *> m_Constraints;
+	std::vector<CPhysicsSpring *> m_Springs;
 	std::vector<uint64_t> m_ContactKeys;
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	uint32_t m_nPreStepCount = 0;
+	int m_nControllerCursor = -1;
 	const CPhysCollide *m_pCollide = nullptr;
 	void *m_pGameData = nullptr;
 	IPhysicsShadowController *m_pShadow = nullptr;
@@ -376,4 +402,8 @@ private:
 	bool m_bCoreAngularVelocityValid = false;
 	bool m_bNoShift = true;
 	bool m_bReportPreStepVelocity = false;
+	bool m_bAsleepSinceCreation = false;
+	bool m_bHasName = false;
+	bool m_bGravityApplied = false;
+	bool m_bHasTouchedDynamic = false;
 };

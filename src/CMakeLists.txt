@@ -7,6 +7,8 @@ add_library( vphysics SHARED
 	vphysics/physics_collide.cpp
 	vphysics/physics_collision.cpp
 	vphysics/physics_collision_set.cpp
+	vphysics/physics_constraint.cpp
+	vphysics/physics_constraint_solver.cpp
 	vphysics/physics_controller.cpp
 	vphysics/physics_environment.cpp
 	vphysics/physics_fluid_controller.cpp
@@ -17,10 +19,12 @@ add_library( vphysics SHARED
 	vphysics/physics_player_controller.cpp
 	vphysics/physics_polyhedron.cpp
 	vphysics/physics_shadow_controller.cpp
+	vphysics/physics_spring.cpp
 	vphysics/physics_surface_props.cpp
 	vphysics/physics_trace.cpp
 	vphysics/physics_virtual_mesh.cpp
 	vphysics/vphysics_key_parser.cpp
+	vphysics/vphysics_saverestore.cpp
 	compact_builder/compact_surface.cpp
 	compact_builder/surface_builder_ledge_soup.cpp
 	compact_builder/surface_builder_pointsoup.cpp

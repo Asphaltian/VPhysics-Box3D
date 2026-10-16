@@ -1,5 +1,9 @@
 ---
 Language: Cpp
+Macros:
+  - "BEGIN_SIMPLE_DATADESC(name)=int name = 0,"
+StatementMacros:
+  - END_DATADESC
 Standard: c++20
 ColumnLimit: 0
 UseTab: Always

@@ -1,5 +1,7 @@
 #include "box3d_setup.h"
 
+#include "conversion.h"
+
 #include "tier0/dbg.h"
 #include "tier0/platform.h"
 
@@ -19,7 +21,7 @@ static int Box3DAssert( const char *pCondition, const char *pFileName, int nLine
 
 void SetupBox3D()
 {
-	b3SetLengthUnitsPerMeter( 1.0f / 0.0254f );
+	b3SetLengthUnitsPerMeter( IVP_TO_SOURCE );
 	b3SetLogFcn( Box3DLog );
 	b3SetAssertFcn( Box3DAssert );
 }

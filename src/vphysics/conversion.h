@@ -8,6 +8,9 @@
 #include <cmath>
 #include <numbers>
 
+inline constexpr float SOURCE_TO_IVP = 0.0254f;
+inline constexpr float IVP_TO_SOURCE = 39.37008f;
+
 inline b3Vec3 ToBox3D( const Vector &vector )
 {
 	return { vector.x, vector.y, vector.z };
@@ -16,6 +19,21 @@ inline b3Vec3 ToBox3D( const Vector &vector )
 inline Vector ToSource( b3Vec3 vector )
 {
 	return Vector( vector.x, vector.y, vector.z );
+}
+
+inline b3Vec3 SourceToIVP( b3Vec3 vector )
+{
+	return { vector.x * SOURCE_TO_IVP, -( vector.z * SOURCE_TO_IVP ), vector.y * SOURCE_TO_IVP };
+}
+
+inline b3Vec3 SourceToIVP( const Vector &vector )
+{
+	return SourceToIVP( ToBox3D( vector ) );
+}
+
+inline b3Vec3 IVPToSource( b3Vec3 vector )
+{
+	return { IVP_TO_SOURCE * vector.x, IVP_TO_SOURCE * vector.z, -( IVP_TO_SOURCE * vector.y ) };
 }
 
 inline b3Quat ToBox3D( const QAngle &angles )

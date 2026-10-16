@@ -19,6 +19,8 @@ set( BOX3D_BENCHMARKS OFF CACHE BOOL "" FORCE )
 set( BOX3D_DOCS OFF CACHE BOOL "" FORCE )
 add_subdirectory( external/box3d EXCLUDE_FROM_ALL )
 
+include( cmake/Game.cmake )
 include( cmake/SourceSDK.cmake )
+include( cmake/Qhull.cmake )
 
 add_subdirectory( src )

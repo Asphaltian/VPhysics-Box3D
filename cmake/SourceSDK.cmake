@@ -37,7 +37,7 @@ if( WIN32 )
 		/Zc:inline
 		/GF
 		/Gw
-		/fp:fast
+		/fp:precise
 	)
 	target_link_libraries( source_sdk INTERFACE "${SOURCE_SDK_SRC}/lib/public/x64/tier0.lib" )
 elseif( CMAKE_SYSTEM_NAME STREQUAL "Linux" )

@@ -39,10 +39,6 @@ static constexpr double GRAZE_DISTANCE_FACTOR = 0.9;
 static constexpr unsigned short SEGMENT_END_FLAG = 0x8000;
 static constexpr unsigned short VERTEX_INDEX_MASK = 0x7FFF;
 
-static constexpr float DEGREES_TO_RADIANS = 0.017453292f;
-static constexpr float HALF_PI = 1.5707964f;
-static constexpr float SMALL_ROLL_ANGLE = 1.2207031e-4f;
-
 static constexpr int LANE_COUNT = 4;
 static constexpr int MAX_POINT_BLOCKS = MAX_COLLIDE_MAP_SPAN / LANE_COUNT;
 static constexpr int VISITED_SLOT_COUNT = 512;
@@ -701,78 +697,6 @@ static LedgeHit_t SolveLedge( MovingShape &moving, TargetShape &target, const Tr
 	return hit;
 }
 
-static __m128 BroadcastBits( uint32_t nBits )
-{
-	return _mm_castsi128_ps( _mm_set1_epi32( static_cast<int>( nBits ) ) );
-}
-
-static __m128 Sine( __m128 x )
-{
-	const __m128 absoluteMask = BroadcastBits( 0x7FFFFFFF );
-	const __m128 roundingShift = BroadcastBits( 0x4B400000 );
-	const __m128 absolute = _mm_and_ps( x, absoluteMask );
-	const __m128 sign = _mm_andnot_ps( absoluteMask, x );
-
-	const __m128 rounded = _mm_add_ps( _mm_mul_ps( absolute, BroadcastBits( 0x3EA2F983 ) ), roundingShift );
-	const __m128 n = _mm_sub_ps( rounded, roundingShift );
-	__m128 r = _mm_sub_ps( absolute, _mm_mul_ps( n, BroadcastBits( 0x40490000 ) ) );
-	r = _mm_sub_ps( r, _mm_mul_ps( n, BroadcastBits( 0x3A7DA000 ) ) );
-	r = _mm_sub_ps( r, _mm_mul_ps( n, BroadcastBits( 0x34222000 ) ) );
-	r = _mm_sub_ps( r, _mm_mul_ps( n, BroadcastBits( 0x2CB4611A ) ) );
-
-	const __m128 r2 = _mm_mul_ps( r, r );
-	r = _mm_xor_ps( r, _mm_castsi128_ps( _mm_slli_epi32( _mm_castps_si128( rounded ), 31 ) ) );
-
-	__m128 polynomial = _mm_add_ps( _mm_mul_ps( BroadcastBits( 0x362EDEF8 ), r2 ), BroadcastBits( 0xB94FB7FF ) );
-	polynomial = _mm_add_ps( _mm_mul_ps( polynomial, r2 ), BroadcastBits( 0x3C088766 ) );
-	polynomial = _mm_add_ps( _mm_mul_ps( polynomial, r2 ), BroadcastBits( 0xBE2AAAA6 ) );
-	const __m128 result = _mm_xor_ps( _mm_add_ps( r, _mm_mul_ps( _mm_mul_ps( r2, polynomial ), r ) ), sign );
-
-	const int nLargeMask = _mm_movemask_ps( _mm_cmpnle_ps( absolute, BroadcastBits( 0x461C4000 ) ) );
-	if ( nLargeMask == 0 )
-		return result;
-
-	alignas( 16 ) float inputs[4];
-	alignas( 16 ) float outputs[4];
-	_mm_store_ps( inputs, x );
-	_mm_store_ps( outputs, result );
-	for ( int nLane = 0; nLane < 4; ++nLane )
-	{
-		if ( nLargeMask & ( 1 << nLane ) )
-			outputs[nLane] = std::sin( inputs[nLane] );
-	}
-	return _mm_load_ps( outputs );
-}
-
-static void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 &up )
-{
-	const float flYaw = angles.y * DEGREES_TO_RADIANS;
-	const float flPitch = angles.x * DEGREES_TO_RADIANS;
-	const float flRoll = angles.z * DEGREES_TO_RADIANS;
-
-	alignas( 16 ) float yawPitch[4];
-	_mm_store_ps( yawPitch, Sine( _mm_add_ps( _mm_setr_ps( flYaw, flYaw, flPitch, flPitch ), _mm_setr_ps( 0.0f, HALF_PI, 0.0f, HALF_PI ) ) ) );
-	const float sy = yawPitch[0];
-	const float cy = yawPitch[1];
-	const float sp = yawPitch[2];
-	const float cp = yawPitch[3];
-
-	const float flAbsoluteRoll = std::fabs( flRoll );
-	float sr = flRoll;
-	float cr = 1.0f - ( flAbsoluteRoll * flAbsoluteRoll ) * 0.5f;
-	if ( !( flAbsoluteRoll < SMALL_ROLL_ANGLE ) )
-	{
-		alignas( 16 ) float roll[4];
-		_mm_store_ps( roll, Sine( _mm_setr_ps( flRoll, flAbsoluteRoll + HALF_PI, 0.0f, 0.0f ) ) );
-		sr = roll[0];
-		cr = roll[1];
-	}
-
-	forward = { cp * cy, cp * sy, -sp };
-	right = { cr * sy - ( sr * sp ) * cy, -( cr * cy ) - ( sr * sp ) * sy, -( sr * cp ) };
-	up = { ( cr * sp ) * cy + sr * sy, ( cr * sp ) * sy - sr * cy, cr * cp };
-}
-
 struct VisitedPoints_t
 {
 	uint32_t m_Slots[VISITED_SLOT_COUNT] = {};
@@ -806,11 +730,14 @@ struct alignas( 16 ) PointBlock_t
 
 static thread_local std::vector<PointBlock_t> s_ReusedPointBlocks;
 
+static const Vector ZERO_ORIGIN( 0.0f, 0.0f, 0.0f );
+
 class CTraceCollide
 {
 public:
-	CTraceCollide( const CPhysCollideCompactSurface &collide, const QAngle &angles )
+	CTraceCollide( const CPhysCollideCompactSurface &collide, const Vector &origin, const QAngle &angles )
 	: m_Collide( collide )
+	, m_bHasOrigin( origin.x != 0.0f || origin.y != 0.0f || origin.z != 0.0f )
 	, m_pVisited( &s_VisitedPoints )
 	{
 		b3Vec3 forward, right, up;
@@ -824,13 +751,16 @@ public:
 			b3MulSV( IVP_TO_SOURCE, ToFloat( m_Rotation[2] ) ),
 			b3Neg( b3MulSV( IVP_TO_SOURCE, ToFloat( m_Rotation[1] ) ) ),
 		};
+		const b3Vec3 translation = IVPToSource( SourceToIVP( origin ) );
 		for ( int i = 0; i < 3; ++i )
 		{
 			m_World[i][0] = rows[i].x;
 			m_World[i][1] = rows[i].y;
 			m_World[i][2] = rows[i].z;
-			m_World[i][3] = 0.0f;
 		}
+		m_World[0][3] = translation.x;
+		m_World[1][3] = translation.y;
+		m_World[2][3] = translation.z;
 	}
 
 	const CPhysCollideCompactSurface &GetCollide() const { return m_Collide; }
@@ -876,7 +806,7 @@ public:
 		m_pInfo = m_Collide.GetCollideMapEntry( nLedge );
 		m_WorldSphere = GetWorldSphere( nLedge );
 		m_nBlockCount = 0;
-		if ( !m_pInfo || !( m_pInfo->m_nFlags & ( COLLIDE_MAP_CONTIGUOUS | COLLIDE_MAP_RUNS ) ) )
+		if ( m_bHasOrigin || !m_pInfo || !( m_pInfo->m_nFlags & ( COLLIDE_MAP_CONTIGUOUS | COLLIDE_MAP_RUNS ) ) )
 			return;
 
 		m_nBlockCount = ( m_pInfo->m_nCount + LANE_COUNT - 1 ) / LANE_COUNT;
@@ -1051,6 +981,7 @@ private:
 	}
 
 	const CPhysCollideCompactSurface &m_Collide;
+	bool m_bHasOrigin;
 	VisitedPoints_t *m_pVisited;
 	RealVec3_t m_Rotation[3];
 	float m_World[3][4];
@@ -1333,7 +1264,7 @@ void TraceBoxAgainstCollide( const Ray_t &ray, unsigned int contentsMask, IConve
 	const CPhysCollideCompactSurface *pSurface = pCollide->GetCompactSurface();
 	if ( pSurface )
 	{
-		CTraceCollide target( *pSurface, collideAngles );
+		CTraceCollide target( *pSurface, ZERO_ORIGIN, collideAngles );
 
 		const b3Vec3 start = ToBox3D( ray.m_Start - collideOrigin );
 		const b3Vec3 delta = ToBox3D( ray.m_Delta );
@@ -1367,8 +1298,8 @@ void TraceCollideAgainstCollide( const Vector &start, const Vector &end, const C
 	const CPhysCollideCompactSurface *pSurface = pCollide->GetCompactSurface();
 	if ( pSweepSurface && pSurface )
 	{
-		CTraceCollide moving( *pSweepSurface, sweepAngles );
-		CTraceCollide target( *pSurface, collideAngles );
+		CTraceCollide moving( *pSweepSurface, ZERO_ORIGIN, sweepAngles );
+		CTraceCollide target( *pSurface, ZERO_ORIGIN, collideAngles );
 		target.ReuseWorldPoints();
 
 		const b3Vec3 localStart = ToBox3D( start - collideOrigin );
@@ -1622,4 +1553,66 @@ bool IsBoxIntersectingTruncatedCone( const Vector &boxAbsMins, const Vector &box
 	}
 
 	return false;
+}
+
+void GetCompactSurfaceAABB( const CPhysCollideCompactSurface &collide, const Vector &origin, const QAngle &angles, Vector *pMins, Vector *pMaxs )
+{
+	static constexpr float CLEARED_BOUND = 99999.0f;
+	static const b3Vec3 s_Directions[6] = { { -1.0f, 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } };
+
+	CTraceCollide cache( collide, origin, angles );
+	const std::span<const CPhysCollideCompactSurface::LedgeTreeNode_t> nodes = collide.GetLedgeTree();
+	if ( nodes[0].m_nRightChild < 0 )
+	{
+		cache.SetLedge( nodes[0].m_nConvex );
+		pMins->x = cache.Support( s_Directions[0] ).m_Point.x;
+		pMins->y = cache.Support( s_Directions[1] ).m_Point.y;
+		pMins->z = cache.Support( s_Directions[2] ).m_Point.z;
+		pMaxs->x = cache.Support( s_Directions[3] ).m_Point.x;
+		pMaxs->y = cache.Support( s_Directions[4] ).m_Point.y;
+		pMaxs->z = cache.Support( s_Directions[5] ).m_Point.z;
+		return;
+	}
+
+	b3Vec3 mins = { CLEARED_BOUND, CLEARED_BOUND, CLEARED_BOUND };
+	b3Vec3 maxs = { -CLEARED_BOUND, -CLEARED_BOUND, -CLEARED_BOUND };
+	collide.VisitLeafLedges( [&]( int nLedge ) {
+		cache.SetLedge( nLedge );
+		for ( b3Vec3 direction : s_Directions )
+		{
+			const b3Vec3 point = cache.Support( direction ).m_Point;
+			mins = { std::min( mins.x, point.x ), std::min( mins.y, point.y ), std::min( mins.z, point.z ) };
+			maxs = { std::max( maxs.x, point.x ), std::max( maxs.y, point.y ), std::max( maxs.z, point.z ) };
+		}
+	} );
+	*pMins = ToSource( mins );
+	*pMaxs = ToSource( maxs );
+}
+
+Vector GetCompactSurfaceExtent( const CPhysCollideCompactSurface &collide, const Vector &origin, const QAngle &angles, const Vector &direction )
+{
+	static constexpr float INITIAL_EXTENT_DISTANCE = -1e6f;
+
+	CTraceCollide cache( collide, origin, angles );
+	const b3Vec3 searchDirection = ToBox3D( direction );
+	const std::span<const CPhysCollideCompactSurface::LedgeTreeNode_t> nodes = collide.GetLedgeTree();
+	if ( nodes[0].m_nRightChild < 0 )
+	{
+		cache.SetLedge( nodes[0].m_nConvex );
+		return ToSource( cache.Support( searchDirection ).m_Point );
+	}
+
+	Vector extent( 0.0f, 0.0f, 0.0f );
+	float flBestDistance = INITIAL_EXTENT_DISTANCE;
+	collide.VisitLeafLedges( [&]( int nLedge ) {
+		cache.SetLedge( nLedge );
+		const b3Vec3 point = cache.Support( searchDirection ).m_Point;
+		const float flDistance = ( point.y * direction.y + point.x * direction.x ) + point.z * direction.z;
+		if ( flDistance > flBestDistance )
+		{
+			flBestDistance = flDistance;
+			extent = ToSource( point );
+		}
+	} );
+	return extent;
 }

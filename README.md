@@ -1,4 +1,4 @@
-# VPhysics-Box3D
+# VPhysics Box3D
 
 This is a reimplementation of Source VPhysics (IVP/Havok) on [Box3D](https://github.com/erincatto/box3d).
 

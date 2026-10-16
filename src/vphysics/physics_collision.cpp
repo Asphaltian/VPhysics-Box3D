@@ -402,11 +402,20 @@ Vector CPhysicsCollision::CollideGetExtent( const CPhysCollide *pCollide, const 
 	if ( !pCollide )
 		return collideOrigin;
 
+	if ( const CPhysCollideCompactSurface *pSurface = pCollide->GetCompactSurface() )
+		return GetCompactSurfaceExtent( *pSurface, collideOrigin, collideAngles, direction );
+
 	return pCollide->GetExtent( ToBox3D( collideOrigin, collideAngles ), direction );
 }
 
 void CPhysicsCollision::CollideGetAABB( Vector *pMins, Vector *pMaxs, const CPhysCollide *pCollide, const Vector &collideOrigin, const QAngle &collideAngles )
 {
+	if ( const CPhysCollideCompactSurface *pSurface = pCollide->GetCompactSurface() )
+	{
+		GetCompactSurfaceAABB( *pSurface, collideOrigin, collideAngles, pMins, pMaxs );
+		return;
+	}
+
 	pCollide->GetAABB( pMins, pMaxs, ToBox3D( collideOrigin, collideAngles ) );
 }
 

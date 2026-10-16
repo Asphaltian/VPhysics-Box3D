@@ -1,12 +1,22 @@
 add_library( vphysics SHARED
 	vphysics/box3d_setup.cpp
+	vphysics/conversion.cpp
 	vphysics/create_interface.cpp
 	vphysics/parse_file.cpp
+	vphysics/physics.cpp
 	vphysics/physics_collide.cpp
 	vphysics/physics_collision.cpp
 	vphysics/physics_collision_set.cpp
+	vphysics/physics_controller.cpp
+	vphysics/physics_environment.cpp
+	vphysics/physics_fluid_controller.cpp
+	vphysics/physics_friction_snapshot.cpp
+	vphysics/physics_motion_controller.cpp
+	vphysics/physics_object.cpp
 	vphysics/physics_object_pair_hash.cpp
+	vphysics/physics_player_controller.cpp
 	vphysics/physics_polyhedron.cpp
+	vphysics/physics_shadow_controller.cpp
 	vphysics/physics_surface_props.cpp
 	vphysics/physics_trace.cpp
 	vphysics/physics_virtual_mesh.cpp

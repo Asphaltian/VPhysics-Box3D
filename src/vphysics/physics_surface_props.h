@@ -24,10 +24,12 @@ public:
 	const char *GetString( unsigned short stringTableIndex ) const override;
 	const char *GetPropName( int surfaceDataIndex ) const override;
 	void SetWorldMaterialIndexTable( int *pMapArray, int mapSize ) override;
+	int GetWorldMaterialIndex( int nMaterial ) const;
 	void GetPhysicsParameters( int surfaceDataIndex, surfacephysicsparams_t *pParamsOut ) const override;
 
-private:
 	static constexpr int MATERIAL_INDEX_SHADOW = 0xF000;
+
+private:
 	static constexpr int MAX_MATERIAL_INDEX = 128;
 	static constexpr unsigned short INVALID_STRING_INDEX = 0xFFFF;
 

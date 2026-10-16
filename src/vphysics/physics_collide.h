@@ -96,12 +96,14 @@ public:
 
 	float GetVolume() const;
 	float GetSurfaceArea() const;
+	int FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) const;
 
 private:
 	void BuildHull() const;
 
 	std::vector<b3Vec3> m_Points;
 	std::vector<Triangle_t> m_Triangles;
+	mutable std::vector<b3Vec3> m_TriangleNormals;
 	std::vector<unsigned char> m_Ledge;
 	mutable b3HullData *m_pHull = nullptr;
 	mutable std::atomic<bool> m_bHullBuilt = false;
@@ -224,12 +226,24 @@ public:
 
 	std::span<const LedgeTreeNode_t> GetLedgeTree() const { return m_Nodes; }
 
+	template<typename Function>
+	void VisitLeafLedges( Function &&function, int nNode = 0 ) const
+	{
+		while ( m_Nodes[nNode].m_nRightChild >= 0 )
+		{
+			VisitLeafLedges( function, nNode + 1 );
+			nNode = m_Nodes[nNode].m_nRightChild;
+		}
+		function( m_Nodes[nNode].m_nConvex );
+	}
+
 	int GetLedgeCount() const { return static_cast<int>( m_Ledges.size() ); }
 
 	const unsigned char *GetLedge( int nLedge ) const { return m_pSurface + m_Ledges[nLedge].m_nOffset; }
 
 	int GetSurfaceSize() const;
 
+	b3Vec3 GetIVPMassCenter() const;
 	Vector GetRotationInertia() const;
 
 	float GetUpperLimitRadius() const;

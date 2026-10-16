@@ -3,11 +3,14 @@
 #include "conversion.h"
 #include "physics_collide.h"
 #include "physics_collision.h"
+#include "physics_constraint.h"
 #include "physics_controller.h"
 #include "physics_environment.h"
 #include "physics_fluid_controller.h"
 #include "physics_friction_snapshot.h"
+#include "physics_spring.h"
 #include "physics_surface_props.h"
+#include "vphysics_saverestore.h"
 
 #include "tier0/dbg.h"
 #include "tier0/platform.h"
@@ -16,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
 #include <numbers>
 #include <vector>
 
@@ -36,6 +40,9 @@ static constexpr float MIN_STEP_INTERVAL = 1e-10f;
 static constexpr float MAX_INVERSE_STEP_INTERVAL = 1e10f;
 static constexpr float SHADOW_REST_SPEED_SQUARED = 1e-6f;
 static constexpr float AXIS_LENGTH_BIAS = 1e-10f;
+static constexpr float MASS_CENTER_OVERRIDE_DISTANCE = 1.0f / 256.0f;
+static constexpr short COLLIDE_TYPE_POLYGON = 0;
+static constexpr short COLLIDE_TYPE_SPHERE = 2;
 #if defined( VPHYSICS_GMOD )
 static constexpr double NO_SHIFT_DISTANCE_SQUARED = 1e-16;
 #else
@@ -135,6 +142,7 @@ CPhysicsObject::CPhysicsObject( CPhysicsEnvironment *pEnvironment, const objectp
 , m_nId( pEnvironment->AllocateObjectId() )
 , m_Name( params.pName ? params.pName : "" )
 , m_bStatic( isStatic )
+, m_bHasName( params.pName != nullptr )
 {
 }
 
@@ -175,7 +183,10 @@ CPhysicsObject *CPhysicsObject::CreatePolyObject( CPhysicsEnvironment *pEnvironm
 	CPhysicsObject *pObject = new CPhysicsObject( pEnvironment, *pParams, isStatic );
 	pObject->m_pCollide = pCollide;
 	pObject->ComputeMassProperties( *pParams, massCenter, unitInertia );
+	pObject->m_bAsleepSinceCreation = true;
 	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( origin ) ), AnglesToIVP( rotation ), massCenter, pParams->volume );
+	if ( !isStatic && pParams->dragCoefficient != 0.0f )
+		pObject->EnableDrag( true );
 	return pObject;
 }
 
@@ -190,6 +201,137 @@ CPhysicsObject *CPhysicsObject::CreateSphereObject( CPhysicsEnvironment *pEnviro
 	const float flVolume = pParams->volume > 0.0f ? pParams->volume : ( ( radius * radius ) * radius ) * 4.0f * SPHERE_VOLUME_SCALE;
 	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( position ) ), AnglesToIVP( angles ), b3Vec3_zero, flVolume );
 	return pObject;
+}
+
+static objectparams_t GetRecordParams( const vphysics_save_cphysicsobject_t &record )
+{
+	objectparams_t params = {};
+	params.mass = record.mass;
+	params.damping = record.speedDamping;
+	params.rotdamping = record.rotSpeedDamping;
+	params.dragCoefficient = record.dragCoefficient;
+	params.pName = record.pName;
+	return params;
+}
+
+CPhysicsObject *CPhysicsObject::CreateFromRecord( CPhysicsEnvironment *pEnvironment, const vphysics_save_cphysicsobject_t &record, void *pGameData )
+{
+	if ( record.collideType != COLLIDE_TYPE_SPHERE && !record.pCollide )
+		return nullptr;
+
+	const objectparams_t params = GetRecordParams( record );
+	CPhysicsObject *pObject = new CPhysicsObject( pEnvironment, params, record.isStatic );
+	pObject->InitializeFromRecord( params, record, pGameData );
+	return pObject;
+}
+
+void CPhysicsObject::MoveToEnvironment( CPhysicsEnvironment *pDestination, const vphysics_save_cphysicsobject_t &record, void *pGameData )
+{
+	this->~CPhysicsObject();
+	const objectparams_t params = GetRecordParams( record );
+	new ( this ) CPhysicsObject( pDestination, params, record.isStatic );
+	InitializeFromRecord( params, record, pGameData );
+}
+
+void CPhysicsObject::InitializeFromRecord( const objectparams_t &params, const vphysics_save_cphysicsobject_t &record, void *pGameData )
+{
+	const bool bSphere = record.collideType == COLLIDE_TYPE_SPHERE;
+	b3Vec3 massCenter = b3Vec3_zero;
+	if ( bSphere )
+	{
+		m_flSphereRadius = record.sphereRadius * SOURCE_TO_IVP;
+	}
+	else
+	{
+		m_pCollide = record.pCollide;
+		massCenter = SourceToIVP( m_pCollide->GetMassCenter() );
+		if ( const CPhysCollideCompactSurface *pSurface = m_pCollide->GetCompactSurface() )
+			massCenter = pSurface->GetIVPMassCenter();
+	}
+
+	if ( record.massCenterOverride.x != 0.0f || record.massCenterOverride.y != 0.0f || record.massCenterOverride.z != 0.0f )
+		massCenter = SourceToIVP( record.massCenterOverride );
+
+	ComputeMassProperties( params, massCenter, b3Vec3_zero );
+	m_flMass = record.mass;
+	m_Inertia = Vector( std::fabs( record.rotInertia.x ), std::fabs( record.rotInertia.y ), std::fabs( record.rotInertia.z ) );
+	UpdateInverseMass();
+
+	const int nMaterialIndex = record.materialIndex < 0 ? g_PhysicsSurfaceProps.GetSurfaceIndex( "default" ) : record.materialIndex;
+	Initialize( params, nMaterialIndex, ToReal( SourceToIVP( record.origin ) ), AnglesToIVP( record.angles ), massCenter, record.volume );
+
+	SetCallbackFlags( static_cast<unsigned short>( record.callbacks ) );
+	SetGameFlags( static_cast<unsigned short>( record.gameFlags ) );
+	SetGameIndex( static_cast<unsigned short>( record.gameIndex ) );
+	SetGameData( pGameData );
+	SetContents( static_cast<unsigned int>( record.contentsMask ) );
+
+	if ( record.dragEnabled )
+		EnableDrag( true );
+	if ( !record.motionEnabled )
+		EnableMotion( false );
+	if ( record.isTrigger )
+		BecomeTrigger();
+	if ( !record.gravityEnabled )
+		EnableGravity( false );
+	if ( record.collisionEnabled )
+		EnableCollisions( true );
+
+	if ( record.velocity.LengthSqr() != 0.0f || record.angVelocity.LengthSqr() != 0.0f )
+	{
+		SetVelocityInstantaneous( &record.velocity, &record.angVelocity );
+		if ( record.isAsleep )
+			Sleep();
+	}
+
+	m_bAsleepSinceCreation = record.asleepSinceCreation;
+	if ( !record.isAsleep )
+		Wake();
+	if ( record.hingeAxis != 0 )
+		BecomeHinged( record.hingeAxis - 1 );
+	m_bHasTouchedDynamic = record.hasTouchedDynamic;
+}
+
+void CPhysicsObject::WriteRecord( vphysics_save_cphysicsobject_t &record ) const
+{
+	record.pCollide = m_pCollide;
+	record.sphereRadius = m_pCollide ? 0.0f : GetSphereRadius();
+	record.isStatic = m_bStatic;
+	record.collisionEnabled = m_bCollisionEnabled;
+	record.gravityEnabled = IsGravityEnabled();
+	record.dragEnabled = IsDragEnabled();
+	record.motionEnabled = m_bMotionEnabled;
+	record.isAsleep = IsAsleep();
+	record.isTrigger = m_bTrigger;
+	record.asleepSinceCreation = m_bAsleepSinceCreation;
+	record.hasTouchedDynamic = m_bHasTouchedDynamic;
+	record.hasShadowController = m_pShadow != nullptr;
+	record.collideType = m_pCollide ? COLLIDE_TYPE_POLYGON : COLLIDE_TYPE_SPHERE;
+	record.gameIndex = static_cast<short>( m_nGameIndex );
+	record.hingeAxis = m_nHingedAxis + 1;
+	record.materialIndex = m_nMaterialIndex;
+	record.mass = GetMass();
+	record.rotInertia = GetInertia();
+	GetDamping( &record.speedDamping, &record.rotSpeedDamping );
+
+	Vector collideMassCenter( 0.0f, 0.0f, 0.0f );
+	if ( m_pCollide )
+	{
+		const CPhysCollideCompactSurface *pSurface = m_pCollide->GetCompactSurface();
+		collideMassCenter = pSurface ? ToSource( IVPToSource( pSurface->GetIVPMassCenter() ) ) : m_pCollide->GetMassCenter();
+	}
+	const Vector massCenterOffset = m_MassCenter - collideMassCenter;
+	record.massCenterOverride = std::sqrt( massCenterOffset.LengthSqr() ) > MASS_CENTER_OVERRIDE_DISTANCE ? m_MassCenter : Vector( 0.0f, 0.0f, 0.0f );
+
+	record.callbacks = m_nCallbackFlags;
+	record.gameFlags = m_nGameFlags;
+	record.contentsMask = static_cast<int>( m_nContents );
+	record.volume = m_flVolume;
+	record.dragCoefficient = m_flDragCoefficient;
+	record.angDragCoefficient = m_flAngularDragCoefficient;
+	record.pShadow = m_pShadow;
+	GetPosition( &record.origin, &record.angles );
+	GetVelocity( &record.velocity, &record.angVelocity );
 }
 
 void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex, RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter, float flVolume )
@@ -208,7 +350,6 @@ void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex
 	bodyDef.position = transform.p;
 	bodyDef.rotation = transform.q;
 	bodyDef.isAwake = false;
-	bodyDef.gravityScale = 0.0f;
 	bodyDef.sleepThreshold = SLEEP_THRESHOLD;
 	bodyDef.userData = this;
 	m_Body = b3CreateBody( m_pEnvironment->GetWorld(), &bodyDef );
@@ -234,8 +375,6 @@ void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex
 
 	SetVolume( flVolume );
 	SetGameData( params.pGameData );
-	if ( !m_bStatic && m_pCollide && params.dragCoefficient != 0.0f )
-		EnableDrag( true );
 }
 
 void CPhysicsObject::CreateShapes( bool bSensor )
@@ -318,19 +457,30 @@ void CPhysicsObject::QueueVelocityFlush()
 	}
 }
 
+b3Vec3 CPhysicsObject::GetBodyAngularVelocity( b3Vec3 coreAngular ) const
+{
+	return b3RotateVector( IVPToBox3D( m_NextRotation ), { coreAngular.x, coreAngular.z, -coreAngular.y } );
+}
+
 void CPhysicsObject::FlushVelocity()
 {
 	m_bVelocityFlushQueued = false;
 	if ( m_bCoreVelocityValid )
-		b3Body_SetLinearVelocity( m_Body, IVPToSource( m_CoreVelocity ) );
+	{
+		b3Vec3 velocity = IVPToSource( m_CoreVelocity );
+		if ( m_bGravityApplied )
+			velocity = b3MulSub( velocity, m_pEnvironment->GetSimulationTimestep(), ToBox3D( m_pEnvironment->GetGravityVector() ) );
+		b3Body_SetLinearVelocity( m_Body, velocity );
+	}
 	if ( m_bCoreAngularVelocityValid )
-		b3Body_SetAngularVelocity( m_Body, b3RotateVector( IVPToBox3D( m_NextRotation ), { m_CoreAngularVelocity.x, m_CoreAngularVelocity.z, -m_CoreAngularVelocity.y } ) );
+		b3Body_SetAngularVelocity( m_Body, GetBodyAngularVelocity( m_CoreAngularVelocity ) );
+	m_bGravityApplied = false;
 }
 
 void CPhysicsObject::CapturePreStepVelocity( uint32_t nStepCount )
 {
-	m_PreStepVelocity = b3Body_GetLinearVelocity( m_Body );
-	m_PreStepAngularVelocity = b3Body_GetAngularVelocity( m_Body );
+	m_PreStepVelocity = IVPToSource( GetCoreVelocity() );
+	m_PreStepAngularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
 	m_nPreStepCount = nStepCount;
 }
 
@@ -489,6 +639,7 @@ CPhysicsObject::SleepState_t CPhysicsObject::NotifyWake()
 {
 	const SleepState_t nPrevious = m_nSleepState;
 	m_nSleepState = AWAKE;
+	m_bAsleepSinceCreation = false;
 	return nPrevious;
 }
 
@@ -500,8 +651,14 @@ void CPhysicsObject::ResetClock( double flLastStepTime )
 CPhysicsObject::~CPhysicsObject()
 {
 	RemoveShadowController();
+	m_nCallbackFlags = 0;
+	m_pGameData = nullptr;
 	if ( m_pFluidController )
 		static_cast<CPhysicsFluidController *>( m_pFluidController )->FluidObjectDestroyed();
+	while ( !m_Constraints.empty() )
+		m_Constraints.back()->ObjectDestroyed( this );
+	while ( !m_Springs.empty() )
+		m_Springs.back()->ObjectDestroyed( this );
 	const std::vector<IController *> controllers = m_Controllers;
 	for ( IController *pController : controllers )
 		pController->ObjectDestroyed( this );
@@ -565,6 +722,7 @@ void CPhysicsObject::EnableGravity( bool enable )
 		AttachController( m_pEnvironment->GetGravityController() );
 	else
 		DetachController( m_pEnvironment->GetGravityController() );
+	b3Body_SetGravityScale( m_Body, enable ? 1.0f : 0.0f );
 }
 
 void CPhysicsObject::AttachController( IController *pController )
@@ -572,6 +730,8 @@ void CPhysicsObject::AttachController( IController *pController )
 	m_Controllers.push_back( pController );
 	const int nPriority = pController->GetPriority();
 	auto position = std::upper_bound( m_ControllerOrder.begin(), m_ControllerOrder.end(), nPriority, []( int n, const IController *p ) { return n < p->GetPriority(); } );
+	if ( position - m_ControllerOrder.begin() <= m_nControllerCursor )
+		++m_nControllerCursor;
 	m_ControllerOrder.insert( position, pController );
 }
 
@@ -582,7 +742,10 @@ void CPhysicsObject::DetachController( IController *pController )
 		return;
 
 	m_Controllers.erase( it );
-	m_ControllerOrder.erase( std::find( m_ControllerOrder.begin(), m_ControllerOrder.end(), pController ) );
+	auto order = std::find( m_ControllerOrder.begin(), m_ControllerOrder.end(), pController );
+	if ( order - m_ControllerOrder.begin() < m_nControllerCursor )
+		--m_nControllerCursor;
+	m_ControllerOrder.erase( order );
 }
 
 bool CPhysicsObject::HasController( const IController *pController ) const
@@ -590,12 +753,50 @@ bool CPhysicsObject::HasController( const IController *pController ) const
 	return std::find( m_Controllers.begin(), m_Controllers.end(), pController ) != m_Controllers.end();
 }
 
-void CPhysicsObject::RunControllers( float flTimestep )
+void CPhysicsObject::AttachConstraint( CPhysicsConstraint *pConstraint )
 {
-	for ( int i = static_cast<int>( m_ControllerOrder.size() ) - 1; i >= 0; --i )
+	m_Constraints.push_back( pConstraint );
+}
+
+void CPhysicsObject::DetachConstraint( CPhysicsConstraint *pConstraint )
+{
+	m_Constraints.erase( std::remove( m_Constraints.begin(), m_Constraints.end(), pConstraint ), m_Constraints.end() );
+}
+
+void CPhysicsObject::AttachSpring( CPhysicsSpring *pSpring )
+{
+	m_Springs.push_back( pSpring );
+}
+
+void CPhysicsObject::DetachSpring( CPhysicsSpring *pSpring )
+{
+	m_Springs.erase( std::remove( m_Springs.begin(), m_Springs.end(), pSpring ), m_Springs.end() );
+}
+
+bool CPhysicsObject::IsAttachedToConstraint( bool bExternalOnly ) const
+{
+	for ( IController *pController : m_Controllers )
 	{
-		if ( i < static_cast<int>( m_ControllerOrder.size() ) )
-			m_ControllerOrder[i]->Simulate( this, flTimestep );
+		if ( pController->GetPriority() != CPhysicsConstraintGroup::PRIORITY )
+			continue;
+
+		if ( !bExternalOnly || static_cast<const CPhysicsConstraintGroup *>( pController )->HasExternalObject( this ) )
+			return true;
+	}
+	return false;
+}
+
+void CPhysicsObject::RunControllers( float flTimestep, int nPriorityFloor )
+{
+	for ( ; m_nControllerCursor >= 0; --m_nControllerCursor )
+	{
+		if ( m_nControllerCursor >= static_cast<int>( m_ControllerOrder.size() ) )
+			continue;
+
+		IController *pController = m_ControllerOrder[m_nControllerCursor];
+		if ( pController->GetPriority() <= nPriorityFloor )
+			return;
+		pController->Simulate( this, flTimestep );
 	}
 }
 
@@ -1197,6 +1398,7 @@ void CPhysicsObject::ApplyGravity( float flTimestep )
 	const RealVec3_t gravity = m_pEnvironment->GetIVPGravity();
 	damped = { flTimestep * static_cast<float>( gravity.x ) + damped.x, flTimestep * static_cast<float>( gravity.y ) + damped.y, flTimestep * static_cast<float>( gravity.z ) + damped.z };
 	SetCoreVelocity( damped );
+	m_bGravityApplied = true;
 }
 
 static b3Vec3 ScaleDrag( b3Vec3 v, float k )

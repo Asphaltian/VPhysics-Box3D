@@ -2,12 +2,14 @@
 
 #include "conversion.h"
 #include "physics_collide.h"
+#include "physics_constraint.h"
 #include "physics_fluid_controller.h"
 #include "physics_friction_snapshot.h"
 #include "physics_motion_controller.h"
 #include "physics_object.h"
 #include "physics_player_controller.h"
 #include "physics_shadow_controller.h"
+#include "physics_spring.h"
 #include "physics_surface_props.h"
 
 #include "tier0/dbg.h"
@@ -20,6 +22,7 @@
 #include <cfloat>
 #include <cmath>
 #include <functional>
+#include <limits>
 
 static constexpr float DEFAULT_TIMESTEP = 1.0f / 66.0f;
 static constexpr float IVP_DEFAULT_GRAVITY = 9.83f;
@@ -28,7 +31,6 @@ static constexpr double MIN_SIMULATE_DELTA = 1e-4;
 static constexpr double MAX_STEP_DELTA = 0.1;
 static constexpr float ALIGNED_STEP_SCALE = 1.99999f;
 static constexpr float COLLISION_TOLERANCE = ( 0.25f - 0.0001f ) * SOURCE_TO_IVP;
-static constexpr unsigned int OBJECT_SERIALIZE_SIZE = 160;
 static constexpr float ISOTROPIC_INVERSE_INERTIA_FRACTION = 0.01f;
 static constexpr float MIN_FRICTION_MASS = 1.0f;
 static constexpr float MAX_FRICTION_MASS = 50000.0f;
@@ -203,7 +205,7 @@ CPhysicsEnvironment::CPhysicsEnvironment()
 : m_IVPGravity{ 0.0f, IVP_DEFAULT_GRAVITY, 0.0f }
 {
 	b3WorldDef worldDef = b3DefaultWorldDef();
-	worldDef.gravity = b3Vec3_zero;
+	worldDef.gravity = ToBox3D( GetGravityVector() );
 	worldDef.workerCount = GetPhysicalProcessorCount();
 	worldDef.isotropicInertiaTolerance = std::sqrt( 2.0f * ISOTROPIC_INVERSE_INERTIA_FRACTION / ( 3.0f - ISOTROPIC_INVERSE_INERTIA_FRACTION ) );
 	worldDef.hitEventThreshold = FLT_MAX;
@@ -226,6 +228,7 @@ CPhysicsEnvironment::~CPhysicsEnvironment()
 	m_pCollisionSolver = nullptr;
 	m_pObjectEvents = nullptr;
 	m_pCollisionEvents = nullptr;
+	m_pConstraintEvents = nullptr;
 
 	for ( int i = static_cast<int>( m_Objects.size() ) - 1; i >= 0; --i )
 		delete static_cast<CPhysicsObject *>( m_Objects[i] );
@@ -258,6 +261,7 @@ Vector CPhysicsEnvironment::GetGravityVector() const
 void CPhysicsEnvironment::SetGravity( const Vector &gravityVector )
 {
 	m_IVPGravity = ToReal( SourceToIVP( gravityVector ) );
+	b3World_SetGravity( m_World, ToBox3D( GetGravityVector() ) );
 	UpdateContactTuning();
 	DevMsg( 1, "Set Gravity %.1f (%.3f tolerance)\n", gravityVector.Length(), COLLISION_TOLERANCE * IVP_TO_SOURCE );
 }
@@ -317,6 +321,7 @@ void CPhysicsEnvironment::DestroyObject( IPhysicsObject *pObject )
 
 	CPhysicsObject *pPhysicsObject = static_cast<CPhysicsObject *>( pObject );
 	pPhysicsObject->SetCallbackFlags( pPhysicsObject->GetCallbackFlags() | CALLBACK_MARKED_FOR_DELETE );
+	ForgetRestoredObject( pPhysicsObject );
 
 	if ( m_bInSimulation || m_bDispatchingFriction || m_bDeleteQueue )
 	{
@@ -352,6 +357,86 @@ void CPhysicsEnvironment::DestroyFluidController( IPhysicsFluidController *pCont
 	if ( it != m_FluidControllers.end() )
 		m_FluidControllers.erase( it );
 	delete pFluidController;
+}
+
+IPhysicsSpring *CPhysicsEnvironment::CreateSpring( IPhysicsObject *pObjectStart, IPhysicsObject *pObjectEnd, springparams_t *pParams )
+{
+	if ( !pObjectStart || !pObjectEnd || !pParams )
+		return nullptr;
+
+	return new CPhysicsSpring( this, static_cast<CPhysicsObject *>( pObjectStart ), static_cast<CPhysicsObject *>( pObjectEnd ), *pParams );
+}
+
+void CPhysicsEnvironment::DestroySpring( IPhysicsSpring *pSpring )
+{
+	delete static_cast<CPhysicsSpring *>( pSpring );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateRagdollConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_ragdollparams_t &ragdoll )
+{
+	return CPhysicsConstraint::CreateRagdoll( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), ragdoll );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateHingeConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_hingeparams_t &hinge )
+{
+	return CPhysicsConstraint::CreateHinge( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), constraint_limitedhingeparams_t( hinge ) );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateFixedConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_fixedparams_t &fixed )
+{
+	return CPhysicsConstraint::CreateFixed( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), fixed );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateSlidingConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_slidingparams_t &sliding )
+{
+	return CPhysicsConstraint::CreateSliding( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), sliding );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateBallsocketConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_ballsocketparams_t &ballsocket )
+{
+	return CPhysicsConstraint::CreateBallsocket( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), ballsocket );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreatePulleyConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_pulleyparams_t &pulley )
+{
+	return CPhysicsConstraint::CreatePulley( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), pulley );
+}
+
+IPhysicsConstraint *CPhysicsEnvironment::CreateLengthConstraint( IPhysicsObject *pReferenceObject, IPhysicsObject *pAttachedObject, IPhysicsConstraintGroup *pGroup, const constraint_lengthparams_t &length )
+{
+	return CPhysicsConstraint::CreateLength( this, static_cast<CPhysicsObject *>( pReferenceObject ), static_cast<CPhysicsObject *>( pAttachedObject ), static_cast<CPhysicsConstraintGroup *>( pGroup ), length );
+}
+
+void CPhysicsEnvironment::DestroyConstraint( IPhysicsConstraint *pConstraint )
+{
+	if ( !pConstraint )
+		return;
+
+	for ( IPhysicsObject *pObject : { pConstraint->GetReferenceObject(), pConstraint->GetAttachedObject() } )
+	{
+		if ( pObject && !m_bQuickDelete )
+			pObject->Wake();
+	}
+
+	if ( m_bInSimulation )
+	{
+		pConstraint->Deactivate();
+		m_DeadConstraints.push_back( pConstraint );
+		return;
+	}
+
+	delete pConstraint;
+}
+
+IPhysicsConstraintGroup *CPhysicsEnvironment::CreateConstraintGroup( const constraint_groupparams_t &groupParams )
+{
+	return new CPhysicsConstraintGroup( this, groupParams.additionalIterations + CPhysicsConstraintGroup::BASE_ITERATIONS, groupParams.minErrorTicks, groupParams.errorTolerance * SOURCE_TO_IVP );
+}
+
+void CPhysicsEnvironment::DestroyConstraintGroup( IPhysicsConstraintGroup *pGroup )
+{
+	m_RestoredGroups.erase( std::remove( m_RestoredGroups.begin(), m_RestoredGroups.end(), pGroup ), m_RestoredGroups.end() );
+	delete static_cast<CPhysicsConstraintGroup *>( pGroup );
 }
 
 IPhysicsShadowController *CPhysicsEnvironment::CreateShadowController( IPhysicsObject *pObject, bool allowTranslation, bool allowRotation )
@@ -469,11 +554,18 @@ void CPhysicsEnvironment::Step( double flTime )
 	m_WokenObjects.clear();
 
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	{
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
+		pObject->ResetControllerCursor();
+	}
 
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+		pObject->RunControllers( m_flTimestep, CPhysicsSpring::PRIORITY );
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+		pObject->RunControllers( m_flTimestep, CPhysicsConstraintGroup::PRIORITY );
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
 	{
-		pObject->RunControllers( m_flTimestep );
+		pObject->RunControllers( m_flTimestep, std::numeric_limits<int>::min() );
 		pObject->ClampStepVelocity();
 	}
 
@@ -492,6 +584,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	m_flNextStepTime = flTime + static_cast<double>( m_flTimestep );
 
 	ResolvePendingFilterPairs();
+	ProcessJointEvents();
 
 	m_SteppedObjects.clear();
 	std::vector<CPhysicsObject *> sleeping, woken;
@@ -538,6 +631,26 @@ void CPhysicsEnvironment::Step( double flTime )
 	DispatchContactEvents();
 	ProcessSensorEvents();
 	ProcessPenetration();
+}
+
+void CPhysicsEnvironment::ProcessJointEvents()
+{
+	const b3JointEvents events = b3World_GetJointEvents( m_World );
+	if ( events.count == 0 || !m_pConstraintEvents )
+		return;
+
+	m_BrokenConstraints.clear();
+	for ( int i = 0; i < events.count; ++i )
+	{
+		if ( events.jointEvents[i].userData )
+			m_BrokenConstraints.push_back( static_cast<CPhysicsConstraint *>( events.jointEvents[i].userData ) );
+	}
+
+	for ( CPhysicsConstraint *pConstraint : m_BrokenConstraints )
+	{
+		if ( pConstraint->HasJoint() && m_pConstraintEvents )
+			m_pConstraintEvents->ConstraintBroken( pConstraint );
+	}
 }
 
 void CPhysicsEnvironment::NotifyWoken( CPhysicsObject *pObject )
@@ -716,11 +829,6 @@ void CPhysicsEnvironment::ClearStats()
 	m_Stats = {};
 	m_Stats.totalEnergyDestroyed = flTotalEnergyDestroyed;
 	m_Stats.collisionPairsTotal = nCollisionPairsTotal;
-}
-
-unsigned int CPhysicsEnvironment::GetObjectSerializeSize( IPhysicsObject * ) const
-{
-	return OBJECT_SERIALIZE_SIZE;
 }
 
 bool CPhysicsEnvironment::EvaluateCollision( CPhysicsObject *pObject0, CPhysicsObject *pObject1 ) const
@@ -1311,7 +1419,13 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 			}
 
 			if ( bCreated )
+			{
+				if ( contact.m_pObjects[1]->IsMoveable() )
+					contact.m_pObjects[0]->SetTouchedDynamic();
+				if ( contact.m_pObjects[0]->IsMoveable() )
+					contact.m_pObjects[1]->SetTouchedDynamic();
 				QueueContactEvent( ContactEvent_t::START_TOUCH, contact, friction, 0.0f );
+			}
 
 			if ( bTouching && friction.m_bSeparated && point.normalVelocity < 0.0f )
 			{

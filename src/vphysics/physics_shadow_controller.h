@@ -9,12 +9,15 @@
 
 #include <vector>
 
+struct vphysics_save_cshadowcontroller_t;
+
 class CPhysicsShadowController final : public IPhysicsShadowController, public IController
 {
 public:
 	static constexpr int PRIORITY = 500;
 
 	CPhysicsShadowController( CPhysicsObject *pObject, bool allowTranslation, bool allowRotation );
+	CPhysicsShadowController( CPhysicsObject *pObject, const vphysics_save_cshadowcontroller_t &record );
 	~CPhysicsShadowController() override;
 
 	void Update( const Vector &position, const QAngle &angles, float timeOffset ) override;
@@ -44,6 +47,8 @@ public:
 	void Simulate( CPhysicsObject *pObject, float flTimestep ) override;
 
 	void ObjectDestroyed( CPhysicsObject * ) override { m_pObject = nullptr; }
+
+	void WriteRecord( vphysics_save_cshadowcontroller_t &record ) const;
 
 private:
 	CPhysicsObject *m_pObject;

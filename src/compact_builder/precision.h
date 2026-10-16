@@ -84,6 +84,12 @@ inline float FastInverseSquareRoot( float x )
 	return ( r * ( 3.0f - ( r * r ) * x ) ) * 0.5f;
 }
 
+inline float FastReciprocal( float x )
+{
+	const float r = _mm_cvtss_f32( _mm_rcp_ss( _mm_set_ss( x ) ) );
+	return ( r + r ) - ( r * r ) * x;
+}
+
 inline double ApproximateInverseSquareRoot( double x, int nRefinements )
 {
 	const double flHalf = x * 0.5;

@@ -16,6 +16,8 @@
 #include <vector>
 
 class CPhysConvex;
+class CPhysicsConstraint;
+class CPhysicsConstraintGroup;
 class CPhysicsObject;
 class CPhysicsFluidController;
 class CPhysicsPlayerController;
@@ -111,7 +113,7 @@ public:
 
 	void SetConstraintEventHandler( IPhysicsConstraintEvent *pConstraintEvents ) override { m_pConstraintEvents = pConstraintEvents; }
 
-	void SetQuickDelete( bool ) override {}
+	void SetQuickDelete( bool bQuickDelete ) override { m_bQuickDelete = bQuickDelete; }
 
 	int GetActiveObjectCount() const override { return static_cast<int>( m_ActiveObjects.size() ); }
 
@@ -146,6 +148,10 @@ public:
 
 	void EnableConstraintNotify( bool bEnable ) override { m_bConstraintNotify = bEnable; }
 
+	bool IsConstraintNotifyEnabled() const { return m_bConstraintNotify; }
+
+	IPhysicsConstraintEvent *GetConstraintEventHandler() const { return m_pConstraintEvents; }
+
 	void DebugCheckContacts() override;
 
 	b3WorldId GetWorld() const { return m_World; }
@@ -155,6 +161,8 @@ public:
 	float GetMaxRotationPerStep() const { return m_flMaxRotationPerStep; }
 
 	RealVec3_t GetIVPGravity() const { return m_IVPGravity; }
+
+	Vector GetGravityVector() const;
 
 	uint32_t GetStepCount() const { return m_nStepCount; }
 
@@ -280,12 +288,15 @@ private:
 		Vector m_Normal;
 	};
 
-	Vector GetGravityVector() const;
 	void UpdateContactTuning();
 	void RemoveActiveObject( CPhysicsObject *pObject );
 	void Step( double flTime );
 	void SweepSleepingObjects();
 	void ResolvePendingFilterPairs();
+	void ProcessJointEvents();
+	void RestoreObject( const physrestoreparams_t &params );
+	void RestoreConstraint( const physrestoreparams_t &params );
+	void ForgetRestoredObject( CPhysicsObject *pObject );
 	bool EvaluateCollision( CPhysicsObject *pObject0, CPhysicsObject *pObject1 ) const;
 	bool ShouldCollide( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
 	void ProcessContactEvents();
@@ -330,6 +341,9 @@ private:
 	std::vector<CPhysicsFluidController *> m_FluidControllers;
 	std::vector<CPhysicsPlayerController *> m_PlayerControllers;
 	std::vector<IPhysicsConstraint *> m_DeadConstraints;
+	std::vector<CPhysicsConstraint *> m_BrokenConstraints;
+	std::vector<CPhysicsObject *> m_RestoredCollisions;
+	std::vector<CPhysicsConstraintGroup *> m_RestoredGroups;
 
 	std::unordered_map<uint64_t, Contact_t> m_Contacts;
 	std::unordered_map<uint64_t, Contact_t> m_ProxyResetContacts;
@@ -378,4 +392,5 @@ private:
 	bool m_bClockAligned = true;
 	bool m_bFirstStep = true;
 	bool m_bConstraintNotify = false;
+	bool m_bQuickDelete = false;
 };

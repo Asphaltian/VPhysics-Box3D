@@ -2,6 +2,7 @@
 
 #include "conversion.h"
 #include "physics_surface_props.h"
+#include "vphysics_saverestore.h"
 
 #include <cmath>
 
@@ -48,6 +49,60 @@ CPhysicsShadowController::CPhysicsShadowController( CPhysicsObject *pObject, boo
 
 	pObject->AttachController( this );
 	m_Control.m_LastPosition = {};
+}
+
+CPhysicsShadowController::CPhysicsShadowController( CPhysicsObject *pObject, const vphysics_save_cshadowcontroller_t &record )
+: m_pObject( pObject )
+, m_flSecondsToArrival( record.secondsToArrival )
+, m_flSavedRotDamping( record.saveRot.k[0] )
+, m_SavedInertia( record.savedRI.k[0], record.savedRI.k[2], record.savedRI.k[1] )
+, m_flSavedMass( record.savedMass )
+, m_nSavedCallbackFlags( static_cast<unsigned short>( record.savedFlags ) )
+, m_nSavedMaterialIndex( static_cast<unsigned short>( record.savedMaterial ) )
+, m_bHasTarget( record.enable )
+, m_bAllowTranslation( record.allowPhysicsMovement )
+, m_bAllowRotation( record.allowPhysicsRotation )
+, m_bPhysicallyControlled( record.isPhysicallyControlled )
+{
+	const vphysics_save_shadowcontrolparams_t &params = record.shadowParams;
+	m_Control.m_TargetPosition = ToReal( SourceToIVP( params.targetPosition ) );
+	m_Control.m_TargetRotation = AnglesToIVP( params.targetRotation );
+	m_Control.m_flMaxSpeed = params.maxSpeed * SOURCE_TO_IVP;
+	m_Control.m_flMaxDampSpeed = params.maxDampSpeed * SOURCE_TO_IVP;
+	m_Control.m_flMaxAngular = params.maxAngular * DEGREES_TO_RADIANS;
+	m_Control.m_flMaxDampAngular = params.maxDampAngular * DEGREES_TO_RADIANS;
+	m_Control.m_flDampFactor = params.dampFactor;
+	m_Control.m_flTeleportDistance = params.teleportDistance * SOURCE_TO_IVP;
+	m_Control.m_LastPosition = {};
+	m_Control.m_LastImpulse = b3Vec3_zero;
+	pObject->AttachController( this );
+}
+
+void CPhysicsShadowController::WriteRecord( vphysics_save_cshadowcontroller_t &record ) const
+{
+	record.secondsToArrival = m_flSecondsToArrival;
+	for ( float &flDamping : record.saveRot.k )
+		flDamping = m_flSavedRotDamping;
+	record.savedRI.k[0] = m_SavedInertia.x;
+	record.savedRI.k[1] = m_SavedInertia.z;
+	record.savedRI.k[2] = m_SavedInertia.y;
+	record.savedMass = m_flSavedMass;
+	record.savedMaterial = m_nSavedMaterialIndex;
+	record.savedFlags = m_nSavedCallbackFlags;
+	record.enable = m_bHasTarget;
+	record.allowPhysicsMovement = m_bAllowTranslation;
+	record.allowPhysicsRotation = m_bAllowRotation;
+	record.isPhysicallyControlled = m_bPhysicallyControlled;
+
+	vphysics_save_shadowcontrolparams_t &params = record.shadowParams;
+	params.targetPosition = IVPToSourcePosition( m_Control.m_TargetPosition );
+	params.targetRotation = IVPToAngles( QuatToMatrix( m_Control.m_TargetRotation ) );
+	params.maxSpeed = m_Control.m_flMaxSpeed * IVP_TO_SOURCE;
+	params.maxDampSpeed = m_Control.m_flMaxDampSpeed * IVP_TO_SOURCE;
+	params.maxAngular = m_Control.m_flMaxAngular * RADIANS_TO_DEGREES;
+	params.maxDampAngular = m_Control.m_flMaxDampAngular * RADIANS_TO_DEGREES;
+	params.dampFactor = m_Control.m_flDampFactor;
+	params.teleportDistance = m_Control.m_flTeleportDistance * IVP_TO_SOURCE;
 }
 
 CPhysicsShadowController::~CPhysicsShadowController()

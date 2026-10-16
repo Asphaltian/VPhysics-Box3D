@@ -463,6 +463,8 @@ private:
 	bool m_bCoreAngularVelocityValid = false;
 	bool m_bNoShift = true;
 	bool m_bReportPreStepVelocity = false;
+	bool m_bPreStepVelocityValid = false;
+	bool m_bPreStepAngularVelocityValid = false;
 	bool m_bAsleepSinceCreation = false;
 	bool m_bHasName = false;
 	bool m_bHasTouchedDynamic = false;

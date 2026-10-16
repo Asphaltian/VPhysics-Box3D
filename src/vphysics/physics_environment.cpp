@@ -594,6 +594,7 @@ void CPhysicsEnvironment::Step( double flTime )
 		const b3BodyMoveEvent &event = events.moveEvents[i];
 		CPhysicsObject *pObject = static_cast<CPhysicsObject *>( event.userData );
 		pObject->UpdateTransform( event.transform );
+		pObject->ClampStepVelocity();
 		m_SteppedObjects.push_back( pObject );
 		if ( pObject->GetSleepState() == CPhysicsObject::AWAKE )
 			continue;

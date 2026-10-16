@@ -19,6 +19,7 @@
 #include "box3d/box3d.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <new>
 #include <numbers>
@@ -27,6 +28,12 @@
 static constexpr float MAX_INERTIA = 1e18f;
 static constexpr float MIN_BUOYANCY_VOLUME = 5.0f;
 static constexpr float INERTIA_SCALE = IVP_TO_SOURCE * IVP_TO_SOURCE;
+static const float MAX_BODY_INERTIA = [] {
+	float flInertia = std::cbrt( FLT_MAX );
+	while ( !std::isfinite( flInertia * ( flInertia * flInertia ) ) )
+		flInertia = std::nextafter( flInertia, 0.0f );
+	return flInertia;
+}();
 static constexpr float ENERGY_SCALE = 775.0016f;
 static constexpr float SPHERE_VOLUME_SCALE = 1.0471976f;
 static constexpr float SPHERE_INERTIA_SCALE = 0.4f;
@@ -516,6 +523,8 @@ void CPhysicsObject::CapturePreStepVelocity( uint32_t nStepCount )
 	m_PreStepVelocity = IVPToSource( GetCoreVelocity() );
 	m_PreStepAngularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
 	m_nPreStepCount = nStepCount;
+	m_bPreStepVelocityValid = true;
+	m_bPreStepAngularVelocityValid = true;
 }
 
 Vector CPhysicsObject::GetPreStepVelocityAtPoint( const Vector &worldPosition ) const
@@ -1122,6 +1131,7 @@ void CPhysicsObject::SetCoreVelocity( b3Vec3 velocity )
 {
 	m_CoreVelocity = velocity;
 	m_bCoreVelocityValid = true;
+	m_bPreStepVelocityValid = false;
 	QueueVelocityFlush();
 }
 
@@ -1144,6 +1154,7 @@ void CPhysicsObject::SetCoreAngularVelocity( b3Vec3 angular )
 {
 	m_CoreAngularVelocity = angular;
 	m_bCoreAngularVelocityValid = true;
+	m_bPreStepAngularVelocityValid = false;
 	QueueVelocityFlush();
 }
 
@@ -1292,14 +1303,14 @@ void CPhysicsObject::AddVelocity( const Vector *velocity, const AngularImpulse *
 
 b3Vec3 CPhysicsObject::GetReportedVelocity() const
 {
-	if ( m_bReportPreStepVelocity )
+	if ( m_bReportPreStepVelocity && m_bPreStepVelocityValid )
 		return SourceToIVP( m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepVelocity : b3Vec3_zero );
 	return GetCoreVelocity();
 }
 
 b3Vec3 CPhysicsObject::GetReportedAngularVelocity() const
 {
-	if ( m_bReportPreStepVelocity )
+	if ( m_bReportPreStepVelocity && m_bPreStepAngularVelocityValid )
 	{
 		const b3Vec3 w = m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepAngularVelocity : b3Vec3_zero;
 		return IVPToCore( { w.x, -w.z, w.y } );
@@ -1458,14 +1469,18 @@ void CPhysicsObject::ClampVelocity( bool bExemptShadow )
 	const float flMaxSpeed = m_pEnvironment->GetMaxSpeed();
 	if ( flMaxSpeed > 0.0f )
 	{
-		SetCoreVelocity( ClampToLength( GetCoreVelocity(), flMaxSpeed ) );
+		const b3Vec3 velocity = GetCoreVelocity();
+		if ( b3LengthSquared( velocity ) > flMaxSpeed * flMaxSpeed )
+			SetCoreVelocity( ClampToLength( velocity, flMaxSpeed ) );
 		m_PendingVelocity = ClampToLength( m_PendingVelocity, flMaxSpeed );
 	}
 
 	const float flMaxAngularSpeed = m_pEnvironment->GetMaxRotationPerStep() * m_pEnvironment->GetInverseTimestep();
 	if ( flMaxAngularSpeed > 0.0f )
 	{
-		SetCoreAngularVelocity( ClampToLength( GetCoreAngularVelocity(), flMaxAngularSpeed ) );
+		const b3Vec3 angular = GetCoreAngularVelocity();
+		if ( b3LengthSquared( angular ) > flMaxAngularSpeed * flMaxAngularSpeed )
+			SetCoreAngularVelocity( ClampToLength( angular, flMaxAngularSpeed ) );
 		const float flPendingSpeed = b3Length( m_PendingVelocity );
 		if ( flPendingSpeed > flMaxAngularSpeed )
 			m_PendingAngularVelocity = b3MulSV( flMaxAngularSpeed / flPendingSpeed, m_PendingAngularVelocity );
@@ -1705,13 +1720,20 @@ void CPhysicsObject::UpdateMassData()
 		return;
 	}
 
+	const float flInertiaX = INERTIA_SCALE / m_InvInertia.x;
+	const float flInertiaY = INERTIA_SCALE / m_InvInertia.y;
+	const float flInertiaZ = INERTIA_SCALE / m_InvInertia.z;
+
 	b3MassData massData;
 	massData.mass = 1.0f / m_flInvMass;
 	massData.center = ToBox3D( m_MassCenter );
 	massData.inertia = b3Mat3_zero;
-	massData.inertia.cx.x = INERTIA_SCALE / m_InvInertia.x;
-	massData.inertia.cy.y = INERTIA_SCALE / m_InvInertia.y;
-	massData.inertia.cz.z = INERTIA_SCALE / m_InvInertia.z;
+	if ( flInertiaX <= MAX_BODY_INERTIA || flInertiaY <= MAX_BODY_INERTIA || flInertiaZ <= MAX_BODY_INERTIA )
+	{
+		massData.inertia.cx.x = std::min( flInertiaX, MAX_BODY_INERTIA );
+		massData.inertia.cy.y = std::min( flInertiaY, MAX_BODY_INERTIA );
+		massData.inertia.cz.z = std::min( flInertiaZ, MAX_BODY_INERTIA );
+	}
 	b3Body_SetMassData( m_Body, massData );
 }
 

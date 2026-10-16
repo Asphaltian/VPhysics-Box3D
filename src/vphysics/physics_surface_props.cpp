@@ -292,6 +292,12 @@ void CPhysicsSurfaceProps::SetWorldMaterialIndexTable( int *pMapArray, int mapSi
 		m_WorldMaterialIndices[i] = static_cast<unsigned short>( pMapArray[i] );
 }
 
+int CPhysicsSurfaceProps::GetWorldMaterialIndex( int nMaterial ) const
+{
+	const int nIndex = nMaterial >= 0 && nMaterial < MAX_MATERIAL_INDEX ? m_WorldMaterialIndices[nMaterial] : nMaterial;
+	return GetSurfaceProp( nIndex ) ? nIndex : GetSurfaceIndex( "default" );
+}
+
 void CPhysicsSurfaceProps::GetPhysicsParameters( int surfaceDataIndex, surfacephysicsparams_t *pParamsOut ) const
 {
 	if ( !pParamsOut )

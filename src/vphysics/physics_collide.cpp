@@ -438,6 +438,52 @@ CPhysConvex::~CPhysConvex()
 		b3DestroyHull( m_pHull );
 }
 
+int CPhysConvex::FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) const
+{
+	static constexpr float COPLANAR_TOLERANCE = 1e-4f;
+
+	if ( m_TriangleNormals.size() != m_Triangles.size() )
+	{
+		m_TriangleNormals.clear();
+		for ( const Triangle_t &triangle : m_Triangles )
+		{
+			const b3Vec3 a = m_Points[triangle.m_nVertices[0]];
+			const b3Vec3 normal = b3Cross( b3Sub( m_Points[triangle.m_nVertices[1]], a ), b3Sub( m_Points[triangle.m_nVertices[2]], a ) );
+			const float flLength = b3Length( normal );
+			m_TriangleNormals.push_back( flLength > 0.0f ? b3MulSV( 1.0f / flLength, normal ) : b3Vec3_zero );
+		}
+	}
+
+	float flBest = -FLT_MAX;
+	for ( const b3Vec3 &normal : m_TriangleNormals )
+		flBest = std::max( flBest, b3Dot( normal, localNormal ) );
+
+	int nFallback = -1;
+	for ( size_t i = 0; i < m_Triangles.size(); ++i )
+	{
+		const b3Vec3 &normal = m_TriangleNormals[i];
+		if ( b3Dot( normal, localNormal ) < flBest - COPLANAR_TOLERANCE )
+			continue;
+
+		if ( nFallback < 0 )
+			nFallback = static_cast<int>( i );
+
+		const Triangle_t &triangle = m_Triangles[i];
+		bool bInside = true;
+		for ( int nEdge = 0; nEdge < 3 && bInside; ++nEdge )
+		{
+			const b3Vec3 start = m_Points[triangle.m_nVertices[nEdge]];
+			const b3Vec3 end = m_Points[triangle.m_nVertices[( nEdge + 1 ) % 3]];
+			bInside = b3Dot( b3Cross( b3Sub( end, start ), b3Sub( localPoint, start ) ), normal ) >= 0.0f;
+		}
+
+		if ( bInside )
+			return triangle.m_nMaterialIndex;
+	}
+
+	return nFallback >= 0 ? m_Triangles[nFallback].m_nMaterialIndex : 0;
+}
+
 float CPhysConvex::GetVolume() const
 {
 	if ( m_Triangles.empty() )
@@ -546,6 +592,11 @@ Vector CPhysCollideCompactSurface::GetMassCenter() const
 void CPhysCollideCompactSurface::SetMassCenter( const Vector &massCenter )
 {
 	Store( m_pSurface + SURFACE_MASS_CENTER_OFFSET, SourceToIVP( massCenter ) );
+}
+
+b3Vec3 CPhysCollideCompactSurface::GetIVPMassCenter() const
+{
+	return LoadPoint( m_pSurface + SURFACE_MASS_CENTER_OFFSET );
 }
 
 Vector CPhysCollideCompactSurface::GetRotationInertia() const

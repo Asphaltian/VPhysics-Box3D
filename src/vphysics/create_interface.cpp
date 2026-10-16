@@ -1,4 +1,5 @@
 #include "box3d_setup.h"
+#include "physics.h"
 #include "physics_collision.h"
 #include "physics_surface_props.h"
 
@@ -11,7 +12,9 @@ DLL_EXPORT void *CreateInterface( const char *pName, int *pReturnCode )
 	SetupBox3D();
 
 	void *pInterface = nullptr;
-	if ( !std::strcmp( pName, VPHYSICS_COLLISION_INTERFACE_VERSION ) )
+	if ( !std::strcmp( pName, VPHYSICS_INTERFACE_VERSION ) )
+		pInterface = static_cast<IPhysics *>( &g_Physics );
+	else if ( !std::strcmp( pName, VPHYSICS_COLLISION_INTERFACE_VERSION ) )
 		pInterface = static_cast<IPhysicsCollision *>( &g_PhysicsCollision );
 	else if ( !std::strcmp( pName, VPHYSICS_SURFACEPROPS_INTERFACE_VERSION ) )
 		pInterface = static_cast<IPhysicsSurfaceProps *>( &g_PhysicsSurfaceProps );

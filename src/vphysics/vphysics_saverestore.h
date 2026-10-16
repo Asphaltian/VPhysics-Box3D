@@ -6,6 +6,8 @@
 #include "vphysics/vehicles.h"
 #include "tier0/valve_minmax_off.h"
 
+#include <vector>
+
 class CPhysCollide;
 
 struct vphysics_save_cphysicsobject_t
@@ -111,7 +113,7 @@ struct vphysics_save_cphysicsconstraintgroup_t
 
 struct vphysics_save_motioncontroller_t
 {
-	CUtlVector<IPhysicsObject *> m_objectList;
+	std::vector<IPhysicsObject *> m_objectList;
 	int m_nPriority = 0;
 
 	DECLARE_SIMPLE_DATADESC();

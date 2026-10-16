@@ -132,16 +132,15 @@ void CPhysicsMotionController::Simulate( CPhysicsObject *pObject, float flTimest
 
 void CPhysicsMotionController::WriteRecord( vphysics_save_motioncontroller_t &record ) const
 {
-	for ( CPhysicsObject *pObject : m_Objects )
-		record.m_objectList.AddToTail( pObject );
+	record.m_objectList.assign( m_Objects.begin(), m_Objects.end() );
 	record.m_nPriority = m_nPriority;
 }
 
 void CPhysicsMotionController::ReadRecord( const vphysics_save_motioncontroller_t &record )
 {
 	m_nPriority = record.m_nPriority;
-	for ( int i = 0; i < record.m_objectList.Count(); ++i )
-		AttachObject( record.m_objectList[i], true );
+	for ( IPhysicsObject *pObject : record.m_objectList )
+		AttachObject( pObject, true );
 }
 
 void CPhysicsMotionController::ObjectDestroyed( CPhysicsObject *pObject )

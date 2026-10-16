@@ -93,25 +93,25 @@ class CPhysicsObjectListOps final : public CDefSaveRestoreOps
 public:
 	void Save( const SaveRestoreFieldInfo_t &fieldInfo, ISave *pSave ) override
 	{
-		const CUtlVector<IPhysicsObject *> &list = *static_cast<const CUtlVector<IPhysicsObject *> *>( fieldInfo.pField );
-		const int nCount = list.Count();
+		const std::vector<IPhysicsObject *> &list = *static_cast<const std::vector<IPhysicsObject *> *>( fieldInfo.pField );
+		const int nCount = static_cast<int>( list.size() );
 		pSave->WriteInt( &nCount );
-		for ( int i = 0; i < nCount; ++i )
+		for ( IPhysicsObject *pObject : list )
 		{
-			const uint32_t nId = GetSaveId( list[i] );
+			const uint32_t nId = GetSaveId( pObject );
 			pSave->WriteInt( &nId );
 		}
 	}
 
 	void Restore( const SaveRestoreFieldInfo_t &fieldInfo, IRestore *pRestore ) override
 	{
-		CUtlVector<IPhysicsObject *> &list = *static_cast<CUtlVector<IPhysicsObject *> *>( fieldInfo.pField );
+		std::vector<IPhysicsObject *> &list = *static_cast<std::vector<IPhysicsObject *> *>( fieldInfo.pField );
 		const int nCount = pRestore->ReadInt();
 		for ( int i = 0; i < nCount; ++i )
 		{
 			uint32_t nId = 0;
 			pRestore->ReadInt( &nId );
-			list.AddToTail( static_cast<IPhysicsObject *>( FindRestoredPointer( nId ) ) );
+			list.push_back( static_cast<IPhysicsObject *>( FindRestoredPointer( nId ) ) );
 		}
 	}
 };

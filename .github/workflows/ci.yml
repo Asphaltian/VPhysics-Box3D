@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install clang-format
+        run: pipx install clang-format==20.1.8
+
+      - name: Check formatting
+        run: find src -type f \( -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 clang-format --dry-run --Werror
+
+  build:
+    name: ${{ matrix.game }} ${{ matrix.platform }} ${{ matrix.configuration }}
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-2025-vs2026' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        game: [ sdk2013, gmod ]
+        platform: [ windows, linux ]
+        configuration: [ release, debug ]
+    env:
+      PRESET: ${{ matrix.game }}-${{ matrix.platform }}-x64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake --preset ${{ env.PRESET }}
+
+      - name: Build
+        run: cmake --build --preset ${{ env.PRESET }}-${{ matrix.configuration }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: vphysics-${{ env.PRESET }}-${{ matrix.configuration }}
+          path: |
+            build/${{ env.PRESET }}/src/*/vphysics.dll
+            build/${{ env.PRESET }}/src/*/vphysics.pdb
+            build/${{ env.PRESET }}/src/*/vphysics.so
+          if-no-files-found: error

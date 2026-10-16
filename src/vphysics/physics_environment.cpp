@@ -1437,7 +1437,11 @@ void CPhysicsEnvironment::ReleaseFriction( const Contact_t &contact, const Frict
 {
 	RemoveFrictionPair( GetPairKey( contact.m_pObjects[0], contact.m_pObjects[1] ) );
 	if ( !friction.m_bRemoved && bReport )
+	{
 		QueueContactEvent( ContactEvent_t::END_TOUCH, contact, friction, 0.0f );
+		Contact_t &ending = m_EndingContacts.emplace_back( contact );
+		ending.m_Friction.assign( 1, friction );
+	}
 }
 
 void CPhysicsEnvironment::QueueContactEvent( ContactEvent_t::Type_t nType, const Contact_t &contact, const FrictionContact_t &friction, float flApproachSpeed )
@@ -1529,6 +1533,8 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 	const bool bBall = IsBall( contact.m_pObjects[0] ) || IsBall( contact.m_pObjects[1] );
 	const b3BodyId bodies[2] = { contact.m_pObjects[0]->GetBody(), contact.m_pObjects[1]->GetBody() };
 	const b3Vec3 center = b3ToVec3( b3Body_GetWorldCenter( bodies[0] ) );
+	ptrdiff_t nImpact = -1;
+	float flImpactArrival = 0.0f, flImpactSpeed = 0.0f;
 	for ( int m = 0; m < data.manifoldCount; ++m )
 	{
 		const b3Manifold &manifold = data.manifolds[m];
@@ -1555,7 +1561,7 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 				created.m_nTriangle = point.triangleIndex;
 				created.m_nSide = bBall || nVertexOwner < 0 ? contact.m_nFirstSide : nVertexOwner;
 				created.m_flEnergy = 0.0f;
-				created.m_bSeparated = true;
+				created.m_bSeparated = point.separation - point.normalVelocity * m_flTimestep >= PENETRATION_SEPARATION;
 				created.m_bRemoved = false;
 
 				const int nFaceShape = bBall ? ( IsBall( contact.m_pObjects[0] ) ? 1 : 0 ) : ( nVertexOwner >= 0 ? 1 - nVertexOwner : -1 );
@@ -1602,10 +1608,19 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 			if ( bTouching && friction.m_bSeparated && point.normalVelocity < 0.0f )
 			{
 				friction.m_bSeparated = false;
-				QueueContactEvent( ContactEvent_t::IMPACT, contact, friction, -point.normalVelocity );
+				const float flArrival = point.separation / -point.normalVelocity;
+				if ( nImpact < 0 || flArrival < flImpactArrival )
+				{
+					nImpact = it - contact.m_Friction.begin();
+					flImpactArrival = flArrival;
+					flImpactSpeed = -point.normalVelocity;
+				}
 			}
 		}
 	}
+
+	if ( nImpact >= 0 )
+		QueueContactEvent( ContactEvent_t::IMPACT, contact, contact.m_Friction[nImpact], flImpactSpeed );
 
 	for ( auto it = contact.m_Friction.begin(); it != contact.m_Friction.end(); )
 	{
@@ -1706,6 +1721,8 @@ void CPhysicsEnvironment::DispatchContactEvents()
 		else
 		{
 			ReportTouch( event.m_pObjects[0], event.m_pObjects[1], event.m_Point, event.m_Normal, event.m_nType == ContactEvent_t::START_TOUCH );
+			if ( event.m_nType == ContactEvent_t::END_TOUCH )
+				m_EndingContacts.pop_front();
 		}
 	}
 	events.clear();
@@ -1925,6 +1942,11 @@ const std::vector<CPhysicsEnvironment::FrictionRef_t> &CPhysicsEnvironment::GetS
 			if ( !friction.m_bRemoved )
 				contacts.push_back( { &contact, &friction } );
 		}
+	}
+	for ( const Contact_t &contact : m_EndingContacts )
+	{
+		if ( contact.m_pObjects[0] == pObject || contact.m_pObjects[1] == pObject )
+			contacts.push_back( { &contact, &contact.m_Friction.front() } );
 	}
 	std::sort( contacts.begin(), contacts.end(), []( const FrictionRef_t &a, const FrictionRef_t &b ) { return a.m_pFriction->m_nSequence > b.m_pFriction->m_nSequence; } );
 	return contacts;

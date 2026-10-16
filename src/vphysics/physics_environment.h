@@ -11,6 +11,7 @@
 #include "box3d/collision.h"
 #include "box3d/id.h"
 
+#include <deque>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -402,6 +403,7 @@ private:
 	std::vector<uint64_t> m_PenetrationPairs;
 	std::vector<uint64_t> m_ScannedContacts;
 	std::vector<ContactEvent_t> m_ContactEvents;
+	std::deque<Contact_t> m_EndingContacts;
 	std::vector<FrictionDispatch_t> m_FrictionDispatches;
 	std::vector<ContactNormal_t> m_ContactNormals;
 	mutable std::vector<FrictionRef_t> m_SortedContacts;

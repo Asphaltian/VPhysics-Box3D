@@ -10,6 +10,7 @@
 #include "physics_player_controller.h"
 #include "physics_shadow_controller.h"
 #include "physics_spring.h"
+#include "physics_vehicle_controller.h"
 #include "physics_surface_props.h"
 
 #include "tier0/dbg.h"
@@ -46,28 +47,10 @@ static constexpr float SURFACE_NORMAL_BIAS = 1e-10f;
 static constexpr float IMPACT_SEPARATION = COLLISION_TOLERANCE * IVP_TO_SOURCE;
 static constexpr float PENETRATION_SEPARATION = -( COLLISION_TOLERANCE * IVP_TO_SOURCE );
 static constexpr float FRICTION_RELEASE_SEPARATION = ( 4.5f - 2.0f ) * COLLISION_TOLERANCE * IVP_TO_SOURCE;
-
-class CCollisionData final : public IPhysicsCollisionData
-{
-public:
-	CCollisionData( const Vector &normal, const Vector &point, const Vector &speed )
-	: m_Normal( normal )
-	, m_Point( point )
-	, m_Speed( speed )
-	{
-	}
-
-	void GetSurfaceNormal( Vector &out ) override { out = m_Normal; }
-
-	void GetContactPoint( Vector &out ) override { out = m_Point; }
-
-	void GetContactSpeed( Vector &out ) override { out = m_Speed; }
-
-private:
-	Vector m_Normal;
-	Vector m_Point;
-	Vector m_Speed;
-};
+static constexpr uint32_t SLEEP_RANDOM_MULTIPLIER = 75;
+static constexpr float SLEEP_RANDOM_SCALE = 1.5258789e-5f;
+static constexpr short SLEEP_COUNTDOWN_BASE = 15;
+static constexpr float SLEEP_COUNTDOWN_RANGE = 5.0f;
 
 class CNullDebugOverlay final : public IVPhysicsDebugOverlay
 {
@@ -206,6 +189,7 @@ CPhysicsEnvironment::CPhysicsEnvironment()
 {
 	b3WorldDef worldDef = b3DefaultWorldDef();
 	worldDef.gravity = ToBox3D( GetGravityVector() );
+	worldDef.enableSleep = false;
 	worldDef.workerCount = GetPhysicalProcessorCount();
 	worldDef.isotropicInertiaTolerance = std::sqrt( 2.0f * ISOTROPIC_INVERSE_INERTIA_FRACTION / ( 3.0f - ISOTROPIC_INVERSE_INERTIA_FRACTION ) );
 	worldDef.hitEventThreshold = FLT_MAX;
@@ -230,9 +214,10 @@ CPhysicsEnvironment::~CPhysicsEnvironment()
 	m_pCollisionEvents = nullptr;
 	m_pConstraintEvents = nullptr;
 
-	for ( int i = static_cast<int>( m_Objects.size() ) - 1; i >= 0; --i )
-		delete static_cast<CPhysicsObject *>( m_Objects[i] );
-	m_Objects.clear();
+	std::vector<IPhysicsObject *> objects;
+	objects.swap( m_Objects );
+	for ( int i = static_cast<int>( objects.size() ) - 1; i >= 0; --i )
+		delete static_cast<CPhysicsObject *>( objects[i] );
 
 	CleanupDeleteList();
 
@@ -471,6 +456,16 @@ void CPhysicsEnvironment::RemovePlayerGround( const CPhysicsObject *pObject )
 		pController->GroundDestroyed( pObject );
 }
 
+IPhysicsVehicleController *CPhysicsEnvironment::CreateVehicleController( IPhysicsObject *pVehicleBodyObject, const vehicleparams_t &params, unsigned int nVehicleType, IPhysicsGameTrace *pGameTrace )
+{
+	return new CPhysicsVehicleController( this, static_cast<CPhysicsObject *>( pVehicleBodyObject ), params, nVehicleType, pGameTrace );
+}
+
+void CPhysicsEnvironment::DestroyVehicleController( IPhysicsVehicleController *pController )
+{
+	delete static_cast<CPhysicsVehicleController *>( pController );
+}
+
 IPhysicsMotionController *CPhysicsEnvironment::CreateMotionController( IMotionEvent *pHandler )
 {
 	return pHandler ? new CPhysicsMotionController( pHandler ) : nullptr;
@@ -555,9 +550,13 @@ void CPhysicsEnvironment::Step( double flTime )
 
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
 	{
+		if ( pObject->GetRestState() == CPhysicsObject::REST_FROZEN )
+			pObject->Revive( m_flCurrentTime, ++m_nReviveSequence );
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
 		pObject->ResetControllerCursor();
 	}
+	BuildSimulationUnits();
+	UpdateRestTimers();
 
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
 		pObject->RunControllers( m_flTimestep, CPhysicsSpring::PRIORITY );
@@ -568,6 +567,7 @@ void CPhysicsEnvironment::Step( double flTime )
 		pObject->RunControllers( m_flTimestep, std::numeric_limits<int>::min() );
 		pObject->ClampStepVelocity();
 	}
+	CheckSimulationUnits();
 
 	for ( CPhysicsObject *pObject : m_VelocityFlushObjects )
 		pObject->FlushVelocity();
@@ -587,19 +587,12 @@ void CPhysicsEnvironment::Step( double flTime )
 	ProcessJointEvents();
 
 	m_SteppedObjects.clear();
-	std::vector<CPhysicsObject *> sleeping, woken;
+	std::vector<CPhysicsObject *> woken;
 	const b3BodyEvents events = b3World_GetBodyEvents( m_World );
 	for ( int i = 0; i < events.moveCount; ++i )
 	{
 		const b3BodyMoveEvent &event = events.moveEvents[i];
 		CPhysicsObject *pObject = static_cast<CPhysicsObject *>( event.userData );
-		if ( event.fellAsleep )
-		{
-			pObject->NotifySleep( event.transform );
-			sleeping.push_back( pObject );
-			continue;
-		}
-
 		pObject->UpdateTransform( event.transform );
 		m_SteppedObjects.push_back( pObject );
 		if ( pObject->GetSleepState() == CPhysicsObject::AWAKE )
@@ -622,9 +615,13 @@ void CPhysicsEnvironment::Step( double flTime )
 
 	if ( m_pObjectEvents )
 	{
-		for ( CPhysicsObject *pObject : sleeping )
-			m_pObjectEvents->ObjectSleep( pObject );
+		for ( CPhysicsObject *pObject : m_FrozenObjects )
+		{
+			if ( pObject->GetSleepState() != CPhysicsObject::AWAKE )
+				m_pObjectEvents->ObjectSleep( pObject );
+		}
 	}
+	m_FrozenObjects.clear();
 
 	ProcessContactEvents();
 	ReleaseDisabledContacts();
@@ -698,6 +695,180 @@ void CPhysicsEnvironment::RemoveVelocityFlush( CPhysicsObject *pObject )
 		m_VelocityFlushObjects.erase( it );
 }
 
+static uint32_t s_nSleepSeed = 1;
+
+static float GetSleepRandom()
+{
+	s_nSleepSeed *= SLEEP_RANDOM_MULTIPLIER;
+	return static_cast<float>( s_nSleepSeed & 0xFFFF ) * SLEEP_RANDOM_SCALE;
+}
+
+static void CollectUnit( CPhysicsObject *pObject, uint32_t nStamp, std::vector<CPhysicsObject *> &objects )
+{
+	static thread_local std::vector<b3JointId> s_Joints;
+	const size_t nFirst = objects.size();
+	pObject->SetUnitStamp( nStamp );
+	objects.push_back( pObject );
+	for ( size_t i = nFirst; i < objects.size(); ++i )
+	{
+		const b3BodyId body = objects[i]->GetBody();
+		s_Joints.resize( b3Body_GetJointCount( body ) );
+		b3Body_GetJoints( body, s_Joints.data(), static_cast<int>( s_Joints.size() ) );
+		for ( b3JointId joint : s_Joints )
+		{
+			for ( b3BodyId other : { b3Joint_GetBodyA( joint ), b3Joint_GetBodyB( joint ) } )
+			{
+				CPhysicsObject *pOther = static_cast<CPhysicsObject *>( b3Body_GetUserData( other ) );
+				if ( pOther->IsStatic() || pOther->GetUnitStamp() == nStamp )
+					continue;
+
+				pOther->SetUnitStamp( nStamp );
+				objects.push_back( pOther );
+			}
+		}
+	}
+}
+
+void CPhysicsEnvironment::BuildSimulationUnits()
+{
+	m_UnitObjects.clear();
+	m_SimulationUnits.clear();
+	const uint32_t nStamp = ++m_nUnitStamp;
+	for ( size_t nObject = 0; nObject < m_SimulatedObjects.size(); ++nObject )
+	{
+		CPhysicsObject *pObject = m_SimulatedObjects[nObject];
+		if ( pObject->GetUnitStamp() == nStamp )
+			continue;
+
+		SimulationUnit_t &unit = m_SimulationUnits.emplace_back();
+		unit.m_nFirst = static_cast<int>( m_UnitObjects.size() );
+		CollectUnit( pObject, nStamp, m_UnitObjects );
+		unit.m_nCount = static_cast<int>( m_UnitObjects.size() ) - unit.m_nFirst;
+		unit.m_nSequence = 0;
+		unit.m_bCheckRest = false;
+		for ( int i = unit.m_nFirst; i < unit.m_nFirst + unit.m_nCount; ++i )
+		{
+			CPhysicsObject *pMember = m_UnitObjects[i];
+			if ( pMember->GetLastStepTime() != m_flCurrentTime )
+			{
+				if ( pMember->GetRestState() == CPhysicsObject::REST_FROZEN )
+					pMember->Revive( m_flCurrentTime, ++m_nReviveSequence );
+				pMember->RebuildCoreMatrix( m_flCurrentTime );
+				pMember->ResetControllerCursor();
+				m_SimulatedObjects.push_back( pMember );
+			}
+			unit.m_nSequence = std::max( unit.m_nSequence, pMember->GetReviveSequence() );
+		}
+	}
+	std::sort( m_SimulationUnits.begin(), m_SimulationUnits.end(), []( const SimulationUnit_t &a, const SimulationUnit_t &b ) { return a.m_nSequence != b.m_nSequence ? a.m_nSequence > b.m_nSequence : a.m_nFirst < b.m_nFirst; } );
+}
+
+void CPhysicsEnvironment::UpdateRestTimers()
+{
+	for ( SimulationUnit_t &unit : m_SimulationUnits )
+	{
+		CPhysicsObject **ppObjects = m_UnitObjects.data() + unit.m_nFirst;
+		bool bFast = false;
+		bool bWasFast = false;
+		for ( int i = 0; i < unit.m_nCount; ++i )
+		{
+			bFast = bFast || 1.0f - b3LengthSquared( ppObjects[i]->GetCoreVelocity() ) < 0.0f;
+			bWasFast = bWasFast || ppObjects[i]->IsRestFast();
+		}
+
+		for ( int i = 0; i < unit.m_nCount; ++i )
+		{
+			if ( !bFast && bWasFast )
+				ppObjects[i]->ResetRestTimers( m_flCurrentTime );
+			ppObjects[i]->SetRestFast( bFast );
+		}
+
+		if ( --m_nSleepCountdown == 0 )
+		{
+			m_nSleepCountdown = static_cast<short>( SLEEP_COUNTDOWN_BASE - static_cast<short>( static_cast<int>( GetSleepRandom() * -SLEEP_COUNTDOWN_RANGE ) ) );
+			unit.m_bCheckRest = true;
+		}
+	}
+}
+
+void CPhysicsEnvironment::CheckSimulationUnits()
+{
+	for ( const SimulationUnit_t &unit : m_SimulationUnits )
+	{
+		if ( !unit.m_bCheckRest || m_UnitObjects[unit.m_nFirst]->GetRestState() == CPhysicsObject::REST_FROZEN )
+			continue;
+
+		int nRest = CPhysicsObject::REST_READY;
+		for ( int i = unit.m_nFirst + unit.m_nCount - 1; i >= unit.m_nFirst; --i )
+			nRest &= m_UnitObjects[i]->CheckRest( m_flCurrentTime, true );
+		if ( nRest == CPhysicsObject::REST_READY )
+			FreezeIsland( unit );
+	}
+}
+
+void CPhysicsEnvironment::FreezeIsland( const SimulationUnit_t &unit )
+{
+	m_IslandObjects.assign( m_UnitObjects.begin() + unit.m_nFirst, m_UnitObjects.begin() + unit.m_nFirst + unit.m_nCount );
+	const uint32_t nStamp = ++m_nUnitStamp;
+	for ( CPhysicsObject *pObject : m_IslandObjects )
+		pObject->SetUnitStamp( nStamp );
+
+	for ( size_t i = 0; i < m_IslandObjects.size(); ++i )
+	{
+		for ( uint64_t nKey : m_IslandObjects[i]->GetContactKeys() )
+		{
+			const Contact_t &contact = m_Contacts.find( nKey )->second;
+			CPhysicsObject *pPartner = contact.m_pObjects[contact.m_pObjects[0] == m_IslandObjects[i] ? 1 : 0];
+			if ( pPartner->IsStatic() || pPartner->GetSleepState() != CPhysicsObject::AWAKE || pPartner->GetUnitStamp() == nStamp )
+				continue;
+
+			const size_t nFirst = m_IslandObjects.size();
+			CollectUnit( pPartner, nStamp, m_IslandObjects );
+			for ( size_t j = nFirst; j < m_IslandObjects.size(); ++j )
+			{
+				if ( m_IslandObjects[j]->IsMoveable() && !m_IslandObjects[j]->IsReadyToRest( m_flCurrentTime ) )
+					return;
+			}
+		}
+	}
+
+	for ( CPhysicsObject *pObject : m_IslandObjects )
+	{
+		if ( !pObject->IsMoveable() )
+			continue;
+
+		pObject->Freeze( true );
+		b3Body_SetAwake( pObject->GetBody(), false );
+		m_FrozenObjects.push_back( pObject );
+	}
+	SyncSleepingObjects();
+}
+
+void CPhysicsEnvironment::ForceRest( CPhysicsObject *pObject )
+{
+	if ( pObject->IsAsleep() )
+		return;
+
+	m_IslandObjects.clear();
+	CollectUnit( pObject, ++m_nUnitStamp, m_IslandObjects );
+	for ( CPhysicsObject *pMember : m_IslandObjects )
+	{
+		pMember->PrepareForcedRest( m_flCurrentTime );
+		if ( pMember->CheckRest( m_flCurrentTime, false ) == CPhysicsObject::REST_MOVING )
+			return;
+	}
+
+	for ( CPhysicsObject *pMember : m_IslandObjects )
+	{
+		RemoveWoken( pMember );
+		pMember->Freeze( false );
+		b3Body_SetAwake( pMember->GetBody(), false );
+		if ( m_pObjectEvents && pMember->GetSleepState() == CPhysicsObject::FELL_ASLEEP )
+			m_pObjectEvents->ObjectSleep( pMember );
+	}
+	SyncSleepingObjects();
+}
+
 void CPhysicsEnvironment::SweepSleepingObjects()
 {
 	for ( int i = static_cast<int>( m_ActiveObjects.size() ) - 1; i >= 0; --i )
@@ -745,6 +916,7 @@ void CPhysicsEnvironment::ResetSimulationClock()
 	m_flLastStepTime = 0.0;
 	m_flNextStepTime = m_flTimestep;
 	m_bClockAligned = true;
+	s_nSleepSeed = 1;
 }
 
 void CPhysicsEnvironment::GetActiveObjects( IPhysicsObject **pOutputObjectList ) const
@@ -765,10 +937,10 @@ const IPhysicsObject **CPhysicsEnvironment::GetObjectList( int *pOutputObjectCou
 
 void CPhysicsEnvironment::CleanupDeleteList()
 {
-	for ( CPhysicsObject *pObject : m_DeadObjects )
+	for ( size_t i = 0; i < m_DeadObjects.size(); ++i )
 	{
-		RemoveActiveObject( pObject );
-		delete pObject;
+		RemoveActiveObject( m_DeadObjects[i] );
+		delete m_DeadObjects[i];
 	}
 	m_DeadObjects.clear();
 
@@ -1829,6 +2001,38 @@ bool CPhysicsEnvironment::GetContactPoint( const CPhysicsObject *pObject, Vector
 	if ( ppContactObject )
 		*ppContactObject = contact.m_pObjects[contact.m_pObjects[0] == pObject ? 1 : 0];
 	return true;
+}
+
+bool CPhysicsEnvironment::GetStrongestContact( const CPhysicsObject *pObject, Vector &point, int &nSurface ) const
+{
+	float flBestForce = -1.0f;
+	bool bContact = false;
+	for ( const FrictionRef_t &ref : GetSortedContacts( pObject ) )
+	{
+		const float flForce = ref.m_pFriction->m_flNormalImpulse * m_flInverseTimestep;
+		if ( !( flForce > flBestForce ) )
+			continue;
+
+		const int nSide = ref.m_pContact->m_pObjects[ref.m_pFriction->m_nSide] == pObject ? 0 : 1;
+		flBestForce = flForce;
+		point = ref.m_pFriction->m_Point;
+		nSurface = ref.m_pFriction->m_Materials[1 - nSide];
+		bContact = true;
+	}
+	return bContact;
+}
+
+bool CPhysicsEnvironment::HasFrictionContact( const CPhysicsObject *pObject ) const
+{
+	for ( uint64_t nKey : pObject->GetContactKeys() )
+	{
+		for ( const FrictionContact_t &friction : m_Contacts.find( nKey )->second.m_Friction )
+		{
+			if ( !friction.m_bRemoved )
+				return true;
+		}
+	}
+	return false;
 }
 
 void CPhysicsEnvironment::DispatchFriction()

@@ -3,6 +3,7 @@
 #include "datamap.h"
 #include "vphysics_interface.h"
 #include "vphysics/constraints.h"
+#include "vphysics/vehicles.h"
 #include "tier0/valve_minmax_off.h"
 
 class CPhysCollide;
@@ -163,6 +164,30 @@ struct vphysics_save_constraintpulley_t : public constraint_pulleyparams_t
 
 struct vphysics_save_constraintlength_t : public constraint_lengthparams_t
 {
+	DECLARE_SIMPLE_DATADESC();
+};
+
+struct vphysics_save_cvehiclecontroller_t
+{
+	IPhysicsObject *m_pCarBody;
+	int m_wheelCount;
+	vehicleparams_t m_vehicleData;
+	vehicle_operatingparams_t m_currentState;
+	float m_bodyMass;
+	float m_totalWheelMass;
+	float m_gravityLength;
+	float m_torqueScale;
+	IPhysicsObject *m_pWheels[VEHICLE_MAX_WHEEL_COUNT];
+	Vector m_wheelPosition_Bs[VEHICLE_MAX_WHEEL_COUNT];
+	Vector m_tracePosition_Bs[VEHICLE_MAX_WHEEL_COUNT];
+	int m_vehicleFlags;
+	int m_nTireType;
+	int m_nVehicleType;
+	bool m_bTraceData;
+	bool m_bOccupied;
+	bool m_bEngineDisable;
+	float m_flVelocity[3];
+
 	DECLARE_SIMPLE_DATADESC();
 };
 

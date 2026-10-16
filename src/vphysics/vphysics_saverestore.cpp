@@ -7,6 +7,7 @@
 #include "physics_player_controller.h"
 #include "physics_shadow_controller.h"
 #include "physics_spring.h"
+#include "physics_vehicle_controller.h"
 #include "physics_surface_props.h"
 
 #include "isaverestore.h"
@@ -203,6 +204,138 @@ BEGIN_SIMPLE_DATADESC( vphysics_save_motioncontroller_t )
 	DEFINE_FIELD( m_nPriority, FIELD_INTEGER ),
 	END_DATADESC()
 
+BEGIN_SIMPLE_DATADESC( vehicle_operatingparams_t )
+	DEFINE_FIELD( speed, FIELD_FLOAT ),
+	DEFINE_FIELD( engineRPM, FIELD_FLOAT ),
+	DEFINE_FIELD( gear, FIELD_INTEGER ),
+	DEFINE_FIELD( boostDelay, FIELD_FLOAT ),
+	DEFINE_FIELD( boostTimeLeft, FIELD_INTEGER ),
+	DEFINE_FIELD( skidSpeed, FIELD_FLOAT ),
+	DEFINE_CUSTOM_FIELD( skidMaterial, &s_MaterialOps ),
+	DEFINE_FIELD( steeringAngle, FIELD_FLOAT ),
+	DEFINE_FIELD( wheelsInContact, FIELD_INTEGER ),
+	DEFINE_FIELD( wheelsNotInContact, FIELD_INTEGER ),
+	DEFINE_FIELD( isTorqueBoosting, FIELD_BOOLEAN ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_bodyparams_t )
+	DEFINE_FIELD( massCenterOverride, FIELD_VECTOR ),
+	DEFINE_FIELD( massOverride, FIELD_FLOAT ),
+	DEFINE_FIELD( addGravity, FIELD_FLOAT ),
+	DEFINE_FIELD( maxAngularVelocity, FIELD_FLOAT ),
+	DEFINE_FIELD( tiltForce, FIELD_FLOAT ),
+	DEFINE_FIELD( tiltForceHeight, FIELD_FLOAT ),
+	DEFINE_FIELD( counterTorqueFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( keepUprightTorque, FIELD_FLOAT ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_wheelparams_t )
+	DEFINE_FIELD( radius, FIELD_FLOAT ),
+	DEFINE_FIELD( mass, FIELD_FLOAT ),
+	DEFINE_FIELD( inertia, FIELD_FLOAT ),
+	DEFINE_FIELD( damping, FIELD_FLOAT ),
+	DEFINE_FIELD( rotdamping, FIELD_FLOAT ),
+	DEFINE_FIELD( frictionScale, FIELD_FLOAT ),
+	DEFINE_CUSTOM_FIELD( materialIndex, &s_MaterialOps ),
+	DEFINE_CUSTOM_FIELD( brakeMaterialIndex, &s_MaterialOps ),
+	DEFINE_CUSTOM_FIELD( skidMaterialIndex, &s_MaterialOps ),
+	DEFINE_FIELD( springAdditionalLength, FIELD_FLOAT ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_suspensionparams_t )
+	DEFINE_FIELD( springConstant, FIELD_FLOAT ),
+	DEFINE_FIELD( springDamping, FIELD_FLOAT ),
+	DEFINE_FIELD( stabilizerConstant, FIELD_FLOAT ),
+	DEFINE_FIELD( springDampingCompression, FIELD_FLOAT ),
+	DEFINE_FIELD( maxBodyForce, FIELD_FLOAT ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_axleparams_t )
+	DEFINE_FIELD( offset, FIELD_VECTOR ),
+	DEFINE_FIELD( wheelOffset, FIELD_VECTOR ),
+	DEFINE_FIELD( raytraceCenterOffset, FIELD_VECTOR ),
+	DEFINE_FIELD( raytraceOffset, FIELD_VECTOR ),
+	DEFINE_EMBEDDED( wheels ),
+	DEFINE_EMBEDDED( suspension ),
+	DEFINE_FIELD( torqueFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( brakeFactor, FIELD_FLOAT ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_engineparams_t )
+	DEFINE_FIELD( horsepower, FIELD_FLOAT ),
+	DEFINE_FIELD( maxSpeed, FIELD_FLOAT ),
+	DEFINE_FIELD( maxRevSpeed, FIELD_FLOAT ),
+	DEFINE_FIELD( maxRPM, FIELD_FLOAT ),
+	DEFINE_FIELD( axleRatio, FIELD_FLOAT ),
+	DEFINE_FIELD( throttleTime, FIELD_FLOAT ),
+	DEFINE_FIELD( maxRPM, FIELD_FLOAT ),
+	DEFINE_FIELD( isAutoTransmission, FIELD_BOOLEAN ),
+	DEFINE_FIELD( gearCount, FIELD_INTEGER ),
+	DEFINE_AUTO_ARRAY( gearRatio, FIELD_FLOAT ),
+	DEFINE_FIELD( shiftUpRPM, FIELD_FLOAT ),
+	DEFINE_FIELD( shiftDownRPM, FIELD_FLOAT ),
+	DEFINE_FIELD( boostForce, FIELD_FLOAT ),
+	DEFINE_FIELD( boostDuration, FIELD_FLOAT ),
+	DEFINE_FIELD( boostDelay, FIELD_FLOAT ),
+	DEFINE_FIELD( boostMaxSpeed, FIELD_FLOAT ),
+	DEFINE_FIELD( autobrakeSpeedGain, FIELD_FLOAT ),
+	DEFINE_FIELD( autobrakeSpeedFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( torqueBoost, FIELD_BOOLEAN ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicle_steeringparams_t )
+	DEFINE_FIELD( degreesSlow, FIELD_FLOAT ),
+	DEFINE_FIELD( degreesFast, FIELD_FLOAT ),
+	DEFINE_FIELD( degreesBoost, FIELD_FLOAT ),
+	DEFINE_FIELD( steeringRateSlow, FIELD_FLOAT ),
+	DEFINE_FIELD( steeringRateFast, FIELD_FLOAT ),
+	DEFINE_FIELD( steeringRestRateSlow, FIELD_FLOAT ),
+	DEFINE_FIELD( steeringRestRateFast, FIELD_FLOAT ),
+	DEFINE_FIELD( throttleSteeringRestRateFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( boostSteeringRestRateFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( boostSteeringRateFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( steeringExponent, FIELD_FLOAT ),
+	DEFINE_FIELD( speedSlow, FIELD_FLOAT ),
+	DEFINE_FIELD( speedFast, FIELD_FLOAT ),
+	DEFINE_FIELD( turnThrottleReduceSlow, FIELD_FLOAT ),
+	DEFINE_FIELD( turnThrottleReduceFast, FIELD_FLOAT ),
+	DEFINE_FIELD( powerSlideAccel, FIELD_FLOAT ),
+	DEFINE_FIELD( brakeSteeringRateFactor, FIELD_FLOAT ),
+	DEFINE_FIELD( isSkidAllowed, FIELD_BOOLEAN ),
+	DEFINE_FIELD( dustCloud, FIELD_BOOLEAN ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vehicleparams_t )
+	DEFINE_FIELD( axleCount, FIELD_INTEGER ),
+	DEFINE_FIELD( wheelsPerAxle, FIELD_INTEGER ),
+	DEFINE_EMBEDDED( body ),
+	DEFINE_EMBEDDED_AUTO_ARRAY( axles ),
+	DEFINE_EMBEDDED( engine ),
+	DEFINE_EMBEDDED( steering ),
+	END_DATADESC()
+
+BEGIN_SIMPLE_DATADESC( vphysics_save_cvehiclecontroller_t )
+	DEFINE_CUSTOM_FIELD( m_pCarBody, &s_PointerOps ),
+	DEFINE_FIELD( m_wheelCount, FIELD_INTEGER ),
+	DEFINE_EMBEDDED( m_vehicleData ),
+	DEFINE_EMBEDDED( m_currentState ),
+	DEFINE_FIELD( m_wheelCount, FIELD_INTEGER ),
+	DEFINE_FIELD( m_bodyMass, FIELD_FLOAT ),
+	DEFINE_FIELD( m_totalWheelMass, FIELD_FLOAT ),
+	DEFINE_FIELD( m_gravityLength, FIELD_FLOAT ),
+	DEFINE_FIELD( m_torqueScale, FIELD_FLOAT ),
+	{ FIELD_CUSTOM, "m_pWheels", { static_cast<int>( offsetof( vphysics_save_cvehiclecontroller_t, m_pWheels ) ), 0 }, VEHICLE_MAX_WHEEL_COUNT, FTYPEDESC_SAVE, nullptr, &s_PointerOps, nullptr },
+	DEFINE_AUTO_ARRAY( m_wheelPosition_Bs, FIELD_VECTOR ),
+	DEFINE_AUTO_ARRAY( m_tracePosition_Bs, FIELD_VECTOR ),
+	DEFINE_FIELD( m_vehicleFlags, FIELD_INTEGER ),
+	DEFINE_FIELD( m_nTireType, FIELD_INTEGER ),
+	DEFINE_FIELD( m_nVehicleType, FIELD_INTEGER ),
+	DEFINE_FIELD( m_bTraceData, FIELD_BOOLEAN ),
+	DEFINE_FIELD( m_bOccupied, FIELD_BOOLEAN ),
+	DEFINE_FIELD( m_bEngineDisable, FIELD_BOOLEAN ),
+	DEFINE_AUTO_ARRAY( m_flVelocity, FIELD_FLOAT ),
+	END_DATADESC()
+
 BEGIN_SIMPLE_DATADESC( vphysics_save_cphysicsconstraint_t )
 	DEFINE_FIELD( constraintType, FIELD_INTEGER ),
 	DEFINE_CUSTOM_FIELD( pGroup, &s_PointerOps ),
@@ -386,6 +519,13 @@ bool CPhysicsEnvironment::Save( const physsaveparams_t &params )
 		params.pSave->WriteAll( &record );
 		return true;
 	}
+	case PIID_IPHYSICSVEHICLECONTROLLER:
+	{
+		vphysics_save_cvehiclecontroller_t record = {};
+		static_cast<CPhysicsVehicleController *>( static_cast<IPhysicsVehicleController *>( params.pObject ) )->WriteRecord( record );
+		params.pSave->WriteAll( &record );
+		return true;
+	}
 	default:
 		return false;
 	}
@@ -492,6 +632,13 @@ bool CPhysicsEnvironment::Restore( const physrestoreparams_t &params )
 		vphysics_save_motioncontroller_t record;
 		params.pRestore->ReadAll( &record );
 		pController->ReadRecord( record );
+		break;
+	}
+	case PIID_IPHYSICSVEHICLECONTROLLER:
+	{
+		vphysics_save_cvehiclecontroller_t record = {};
+		params.pRestore->ReadAll( &record );
+		*params.ppObject = static_cast<IPhysicsVehicleController *>( new CPhysicsVehicleController( static_cast<CPhysicsEnvironment *>( params.pEnvironment ), params.pGameTrace, record ) );
 		break;
 	}
 	default:

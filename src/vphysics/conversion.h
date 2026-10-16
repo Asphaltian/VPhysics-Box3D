@@ -41,6 +41,16 @@ inline b3Vec3 IVPToSource( b3Vec3 vector )
 	return { IVP_TO_SOURCE * vector.x, IVP_TO_SOURCE * vector.z, -( IVP_TO_SOURCE * vector.y ) };
 }
 
+inline b3Vec3 SourceToIVPDirection( b3Vec3 vector )
+{
+	return { vector.x, -vector.z, vector.y };
+}
+
+inline b3Vec3 IVPToSourceDirection( b3Vec3 vector )
+{
+	return { vector.x, vector.z, -vector.y };
+}
+
 inline b3Vec3 SourceToIVPAngular( const Vector &angular )
 {
 	return { angular.x * DEGREES_TO_RADIANS, angular.z * -DEGREES_TO_RADIANS, angular.y * DEGREES_TO_RADIANS };

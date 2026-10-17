@@ -1,6 +1,7 @@
 #include "surface_builder_pointsoup.h"
 
 #include "compact_surface.h"
+#include "qhull_build.h"
 #include "template_polygon.h"
 #include "vector_hash.h"
 
@@ -46,9 +47,16 @@ static FILE *GetNullFile()
 
 static bool RunQhull( const char *pCommand, std::vector<coordT> &coordinates )
 {
+	static bool s_bMemoryInitialized = false;
+	if ( !s_bMemoryInitialized )
+	{
+		qh_meminit( GetNullFile() );
+		s_bMemoryInitialized = true;
+	}
+
 	char command[64];
 	std::snprintf( command, sizeof( command ), "%s", pCommand );
-	return qh_new_qhull( 3, static_cast<int>( coordinates.size() / 3 ), coordinates.data(), False, command, nullptr, GetNullFile() ) == 0;
+	return BuildQhull( command, coordinates.data(), static_cast<int>( coordinates.size() / 3 ), GetNullFile() ) == 0;
 }
 
 static void FreeQhull()

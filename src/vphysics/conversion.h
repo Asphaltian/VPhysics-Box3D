@@ -15,6 +15,8 @@ inline constexpr float SOURCE_TO_IVP = 0.0254f;
 inline constexpr float IVP_TO_SOURCE = 39.37008f;
 inline constexpr float DEGREES_TO_RADIANS = 0.017453292f;
 inline constexpr float RADIANS_TO_DEGREES = 57.29578f;
+inline constexpr float COLLISION_TOLERANCE = ( 0.25f - 0.0001f ) * SOURCE_TO_IVP;
+inline constexpr float SHAPE_INFLATION = COLLISION_TOLERANCE * IVP_TO_SOURCE;
 
 inline b3Vec3 ToBox3D( const Vector &vector )
 {

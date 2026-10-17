@@ -7,16 +7,19 @@
 
 #include "compact_builder/precision.h"
 #include "physics_controller.h"
+#include "physics_filter_table.h"
+#include "physics_task_pool.h"
 
 #include "box3d/collision.h"
 #include "box3d/id.h"
 
-#include <deque>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class CPhysConvex;
+struct CollideMesh_t;
 class CPhysicsConstraint;
 class CPhysicsConstraintGroup;
 class CPhysicsObject;
@@ -43,6 +46,31 @@ private:
 	Vector m_Normal;
 	Vector m_Point;
 	Vector m_Speed;
+};
+
+struct FrictionContact_t
+{
+	FrictionContact_t *GetNext( const CPhysicsObject *pObject ) const { return m_pNext[m_pObjects[0] == pObject ? 0 : 1]; }
+
+	CPhysicsObject *m_pObjects[2];
+	FrictionContact_t *m_pPrev[2];
+	FrictionContact_t *m_pNext[2];
+	uint64_t m_nSequence;
+	uint32_t m_nFeatureId;
+	int m_nTriangle;
+	int m_nSide;
+	int m_Materials[2];
+	Vector m_Point;
+	Vector m_Normal;
+	b3Vec3 m_Span;
+	float m_flFriction;
+	float m_flSeparation;
+	float m_flNormalImpulse;
+	float m_flEnergy;
+	uint32_t m_nSpanStep;
+	bool m_bRemoved;
+	bool m_bLinked;
+	bool m_bEnding;
 };
 
 class CPhysicsEnvironment final : public IPhysicsEnvironment
@@ -185,6 +213,8 @@ public:
 
 	float GetMaxRotationPerStep() const { return m_flMaxRotationPerStep; }
 
+	bool AllowsFastRotation() const { return m_flMaxRotationPerStep < CONTINUOUS_ROTATION_LIMIT; }
+
 	RealVec3_t GetIVPGravity() const { return m_IVPGravity; }
 
 	Vector GetGravityVector() const;
@@ -192,6 +222,8 @@ public:
 	uint32_t GetStepCount() const { return m_nStepCount; }
 
 	uint32_t AllocateObjectId() { return ++m_nLastObjectId; }
+
+	CFilterDecisionTable &GetFilterDecisions() { return m_FilterDecisions; }
 
 	CGravityController *GetGravityController() { return &m_GravityController; }
 
@@ -212,7 +244,10 @@ public:
 
 	bool IsCollisionAllowed( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
 	bool IsContactEnabled( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1 ) const;
+	void QueuePenetrationCheck( CPhysicsObject *pObject );
+	bool IsShapePairHeld( b3ShapeId shape0, b3ShapeId shape1 ) const;
 	void ResolveFilterDecisions( CPhysicsObject *pObject, bool bForce );
+	void ResolveSteppedFilterDecisions();
 	void RecheckCollisionFilter( CPhysicsObject *pObject );
 	void RecheckContactPoints( CPhysicsObject *pObject );
 	void RemoveContacts( CPhysicsObject *pObject, CPhysicsObject *pPartner );
@@ -222,7 +257,7 @@ public:
 	void RemoveTriggerOverlaps( CPhysicsObject *pTrigger );
 	void RemoveVisitorOverlaps( CPhysicsObject *pObject );
 	IPhysicsFrictionSnapshot *CreateFrictionSnapshot( CPhysicsObject *pObject );
-	bool RefreshFrictionContact( const CPhysicsObject *pObject, uint64_t nSequence, Vector &point, Vector &normal ) const;
+	Vector GetFrictionNormal( const FrictionContact_t &friction, const CPhysicsObject *pObject ) const;
 	const std::vector<ContactNormal_t> &GetContactNormals( const CPhysicsObject *pObject );
 	bool GetContactPoint( const CPhysicsObject *pObject, Vector *pContactPoint, IPhysicsObject **ppContactObject ) const;
 	bool HasFrictionContact( const CPhysicsObject *pObject ) const;
@@ -230,43 +265,35 @@ public:
 
 private:
 	static constexpr int SUBSTEP_COUNT = 4;
+	static constexpr float CONTINUOUS_ROTATION_LIMIT = 0.5f * B3_PI;
 	static constexpr short SLEEP_COUNTDOWN = 10;
 
-	struct FrictionContact_t
+	struct ContactPoint_t
 	{
-		uint64_t m_nSequence;
 		uint32_t m_nFeatureId;
 		int m_nTriangle;
-		int m_nSide;
-		int m_Materials[2];
-		Vector m_Point;
-		Vector m_Normal;
-		float m_flFriction;
-		float m_flSeparation;
-		float m_flNormalImpulse;
-		float m_flEnergy;
+		uint32_t m_nStep;
 		bool m_bSeparated;
-		bool m_bRemoved;
 	};
 
 	struct Contact_t
 	{
 		CPhysicsObject *m_pObjects[2];
 		const CPhysConvex *m_pConvexes[2];
+		const CollideMesh_t *m_pMeshes[2];
 		b3ShapeId m_Shapes[2];
 		b3ContactId m_ContactId;
 		uint32_t m_nKeyIndex[2];
 		uint32_t m_nScanStep;
 		int m_nFirstSide;
 		int m_nDisableCount;
+		float m_flSpanCapacity;
+		float m_flMinSeparation;
+		bool m_bCompound;
 		bool m_bPenetrationRefused;
-		std::vector<FrictionContact_t> m_Friction;
-	};
-
-	struct FrictionRef_t
-	{
-		const Contact_t *m_pContact;
-		const FrictionContact_t *m_pFriction;
+		bool m_bDetached;
+		std::vector<ContactPoint_t> m_Points;
+		std::vector<FrictionContact_t *> m_Friction;
 	};
 
 	struct ContactEvent_t
@@ -284,6 +311,7 @@ private:
 		Vector m_Point;
 		Vector m_Normal;
 		float m_flApproachSpeed;
+		FrictionContact_t *m_pEnding;
 	};
 
 	struct DisabledContact_t
@@ -334,6 +362,8 @@ private:
 	void CheckSimulationUnits();
 	void FreezeIsland( const SimulationUnit_t &unit );
 	void ResolvePendingFilterPairs();
+	b3AABB GetFilterQueryBounds( const CPhysicsObject *pObject, const b3AABB &bounds ) const;
+	void QueryFilterPartners( CPhysicsObject *pObject, const b3AABB &query );
 	void ProcessJointEvents();
 	void RestoreObject( const physrestoreparams_t &params );
 	void RestoreConstraint( const physrestoreparams_t &params );
@@ -343,17 +373,36 @@ private:
 	void ProcessContactEvents();
 	void ProcessSensorEvents();
 	void ProcessPenetration();
+	void ResolveStaticPenetration( const Contact_t &contact );
+	void HoldStaticPenetration( const Contact_t &contact );
+	void ResolveLedgePenetration( const CPhysConvex &convex, const CPhysicsObject *pStatic, CPhysicsObject *pObject );
+	void DetectPendingPenetrationHolds();
+	void TryHoldPenetration( b3ShapeId shape, b3ShapeId meshShape );
+	bool FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, std::vector<int> &ledges );
+	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId meshShape ) const;
+	void UpdatePenetrationHolds();
+	void QueuePenetrationReset( CPhysicsObject *pObject );
+	void ApplyPenetrationResets();
+	void ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<int> &ledges );
 	void ReleaseDisabledContacts();
 	void DispatchFriction();
 	void PurgePairTimes();
 	void AddFrictionPair( uint64_t nPairKey );
 	void RemoveFrictionPair( uint64_t nPairKey );
-	const std::vector<FrictionRef_t> &GetSortedContacts( const CPhysicsObject *pObject ) const;
 	void InsertContact( uint64_t nKey, Contact_t &&contact );
 	void EraseContact( std::unordered_map<uint64_t, Contact_t>::iterator it );
 	void RetireContact( const Contact_t &contact, bool bReport );
 	void UpdateFrictionContacts( Contact_t &contact );
-	void ReleaseFriction( const Contact_t &contact, const FrictionContact_t &friction, bool bReport );
+	bool ShouldDetachContact( const Contact_t &contact ) const;
+	bool UpdateDetachedContact( Contact_t &contact );
+	float GetMeshFrictionGap( const Contact_t &contact, const FrictionContact_t &friction ) const;
+	FrictionContact_t *CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall );
+	int GetPointMaterials( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, int materials[2] ) const;
+	void SelectLedgeImpacts();
+	void AccumulateFrictionEnergy( Contact_t &contact, float flCapacity );
+	void LinkFriction( FrictionContact_t *pFriction );
+	void UnlinkFriction( FrictionContact_t *pFriction );
+	void ReleaseFriction( const Contact_t &contact, FrictionContact_t *pFriction, bool bReport );
 	void QueueContactEvent( ContactEvent_t::Type_t nType, const Contact_t &contact, const FrictionContact_t &friction, float flApproachSpeed );
 	void DispatchContactEvents();
 	void ReportTouch( CPhysicsObject *pObject0, CPhysicsObject *pObject1, const Vector &point, const Vector &normal, bool bStart );
@@ -364,11 +413,25 @@ private:
 	void ResetCollisionPairs( CPhysicsObject *pObject );
 	void DisablePair( uint64_t nPairKey );
 	void EnablePair( uint64_t nPairKey );
-	int GetContactMaterial( const CPhysicsObject *pObject, const CPhysConvex *pConvex, const Vector &point, const Vector &outwardNormal, bool bFaceFeature ) const;
+	int GetContactMaterial( const Contact_t &contact, int nSide, int nTriangle, const Vector &point, const Vector &outwardNormal, bool bFaceFeature ) const;
+	static int GetContactLedge( const Contact_t &contact, int nTriangle );
+	static int GetPointVertexOwner( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point );
 
 	b3WorldId m_World = b3_nullWorldId;
 	IVPhysicsDebugOverlay *m_pDebugOverlay = nullptr;
 
+	struct FilterQueryResult_t
+	{
+		int m_nThread;
+		size_t m_nBegin;
+		size_t m_nEnd;
+	};
+
+	std::vector<CPhysicsObject *> m_FilterQueryObjects;
+	std::vector<FilterQueryResult_t> m_FilterQueryResults;
+	std::vector<std::vector<CPhysicsObject *>> m_ThreadCandidates;
+	std::vector<std::vector<CPhysicsObject *>> m_ThreadUndecided;
+	CFilterDecisionTable m_FilterDecisions;
 	std::vector<IPhysicsObject *> m_Objects;
 	std::vector<CPhysicsObject *> m_DeadObjects;
 	std::vector<CPhysicsObject *> m_ActiveObjects;
@@ -392,6 +455,8 @@ private:
 
 	std::unordered_map<uint64_t, Contact_t> m_Contacts;
 	std::unordered_map<uint64_t, Contact_t> m_ProxyResetContacts;
+	std::unordered_map<uint64_t, uint64_t> m_DetachedContacts;
+	std::vector<uint64_t> m_ExpiredContacts;
 	std::vector<DisabledContact_t> m_DisabledContacts;
 	std::unordered_map<uint64_t, int> m_DisabledPairs;
 	std::unordered_map<uint64_t, PairTime_t> m_PairTimes;
@@ -402,11 +467,52 @@ private:
 	std::mutex m_PendingFilterMutex;
 	std::vector<uint64_t> m_PenetrationPairs;
 	std::vector<uint64_t> m_ScannedContacts;
+	std::vector<Contact_t *> m_CompoundContacts;
+
+	struct ManifoldPoint_t
+	{
+		const b3Manifold *m_pManifold;
+		const b3ManifoldPoint *m_pPoint;
+		b3Vec3 m_WorldPoint;
+		FrictionContact_t *m_pFriction;
+		int m_nLedge;
+	};
+
+	struct LedgeContact_t
+	{
+		int m_nLedge;
+		ptrdiff_t m_nDeepest;
+	};
+
+	struct ContactImpact_t
+	{
+		ptrdiff_t m_nPoint;
+		float m_flSpeed;
+	};
+
+	std::vector<ManifoldPoint_t> m_ManifoldPoints;
+	std::vector<LedgeContact_t> m_LedgeContacts;
+	std::vector<ContactImpact_t> m_ContactImpacts;
+	std::vector<int> m_PenetrationLedges;
+
+	struct PenetrationHold_t
+	{
+		CPhysicsObject *m_pObject;
+		b3ShapeId m_Shape;
+		b3ShapeId m_MeshShape;
+	};
+
+	std::vector<CPhysicsObject *> m_PendingHoldChecks;
+	std::vector<CPhysicsObject *> m_PenetrationResets;
+	std::vector<PenetrationHold_t> m_PenetrationHolds;
+	std::unordered_set<uint64_t> m_HeldShapePairs;
+	std::vector<int> m_HeldLedges;
+	std::vector<std::pair<int, bool>> m_LedgeStates;
+	std::vector<int> m_MeshTriangles;
+	std::unordered_map<uint64_t, float> m_PairSpanCapacities;
 	std::vector<ContactEvent_t> m_ContactEvents;
-	std::deque<Contact_t> m_EndingContacts;
 	std::vector<FrictionDispatch_t> m_FrictionDispatches;
 	std::vector<ContactNormal_t> m_ContactNormals;
-	mutable std::vector<FrictionRef_t> m_SortedContacts;
 	uint64_t m_nContactSequence = 0;
 	uint32_t m_nLastObjectId = 0;
 	uint32_t m_nStepCount = 0;
@@ -427,6 +533,7 @@ private:
 	float m_flMaxRotationPerStep = 0.0f;
 
 	RealVec3_t m_IVPGravity;
+	CTaskPool m_TaskPool;
 	float m_flAirDensity = 2.0f;
 
 	double m_flCurrentTime = 0.0;

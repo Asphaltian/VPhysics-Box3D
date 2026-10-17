@@ -154,7 +154,8 @@ private:
 	void Initialize( CPhysicsConstraintGroup *pGroup, const constraint_breakableparams_t &constraint, bool bActivate );
 	void BuildRagdoll( const constraint_ragdollparams_t &ragdoll );
 	void BuildHinge( const constraint_limitedhingeparams_t &hinge );
-	int SelectTwistAxis() const;
+	int SelectTwistAxis( const b3Vec3 columns[2][3] ) const;
+	void StoreRagdollRows( int nBody, const b3Vec3 columns[3] );
 	b3Transform GetRagdollFrame( int nBody ) const;
 	void UpdateRagdollSolverAxes();
 	void PrepareBodies( ConstraintBody_t bodies[2], float scales[2] ) const;
@@ -179,11 +180,16 @@ private:
 
 	struct RagdollFrames_t
 	{
-		b3Vec3 m_Axes[2][3];
+		enum Row_t
+		{
+			ROW_TWIST,
+			ROW_PLANE,
+			ROW_CONE,
+		};
+
+		b3Vec3 m_Rows[2][3];
 		b3Vec3 m_Origins[2];
-		int m_nTwistAxis;
-		int m_nConeAxis;
-		int m_nPlaneAxis;
+		int m_SlotAxes[CRagdollSolver::SLOT_COUNT];
 	};
 
 	CPhysicsEnvironment *m_pEnvironment;
@@ -201,10 +207,7 @@ private:
 	matrix3x4_t m_AttachedRefXform = {};
 	b3Vec3 m_Anchors[2] = {};
 	b3Vec3 m_SlideAxis = b3Vec3_zero;
-	constraint_axislimit_t m_RagdollAxes[3] = {};
-	float m_flConeRange = 0.0f;
-	bool m_bConeCentered = false;
-	bool m_bUseClockwiseRotations = false;
+	float m_RagdollLimits[CRagdollSolver::SLOT_COUNT][2] = {};
 	float m_flForceLimit = 0.0f;
 	float m_flTorqueLimit = 0.0f;
 	float m_BodyMassScale[2] = { 1.0f, 1.0f };

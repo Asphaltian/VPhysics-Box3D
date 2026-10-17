@@ -21,11 +21,10 @@ public:
 	template<typename LoadKey>
 	std::pair<uint32_t, bool> FindOrInsert( const Key_t &key, uint32_t nNextIndex, LoadKey &&loadKey )
 	{
-		static constexpr uint32_t s_Multipliers[3] = { 0x9E3779B1u, 0x85EBCA77u, 0xC2B2AE3Du };
-
-		size_t nHash = 0;
+		uint64_t nHash = 0;
 		for ( size_t i = 0; i < nWords; ++i )
-			nHash ^= key[i] * s_Multipliers[i % 3];
+			nHash = ( nHash ^ key[i] ) * 0x9E3779B97F4A7C15ull;
+		nHash ^= nHash >> 32;
 
 		const size_t nMask = m_Slots.size() - 1;
 		for ( size_t nSlot = nHash & nMask;; nSlot = ( nSlot + 1 ) & nMask )

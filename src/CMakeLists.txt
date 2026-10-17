@@ -12,6 +12,7 @@ add_library( vphysics SHARED
 	vphysics/physics_constraint_solver.cpp
 	vphysics/physics_controller.cpp
 	vphysics/physics_environment.cpp
+	vphysics/physics_filter_table.cpp
 	vphysics/physics_fluid_controller.cpp
 	vphysics/physics_friction_snapshot.cpp
 	vphysics/physics_motion_controller.cpp
@@ -22,12 +23,14 @@ add_library( vphysics SHARED
 	vphysics/physics_shadow_controller.cpp
 	vphysics/physics_spring.cpp
 	vphysics/physics_surface_props.cpp
+	vphysics/physics_task_pool.cpp
 	vphysics/physics_trace.cpp
 	vphysics/physics_vehicle_controller.cpp
 	vphysics/physics_virtual_mesh.cpp
 	vphysics/vphysics_key_parser.cpp
 	vphysics/vphysics_saverestore.cpp
 	compact_builder/compact_surface.cpp
+	compact_builder/qhull_build.c
 	compact_builder/surface_builder_ledge_soup.cpp
 	compact_builder/surface_builder_pointsoup.cpp
 	compact_builder/template_polygon.cpp

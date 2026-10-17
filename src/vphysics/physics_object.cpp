@@ -92,14 +92,6 @@ static void ForEachShape( b3BodyId body, Function function )
 		function( shape );
 }
 
-static b3Filter GetCollisionFilter( bool bEnabled )
-{
-	b3Filter filter = b3DefaultFilter();
-	if ( !bEnabled )
-		filter.maskBits = 0;
-	return filter;
-}
-
 static b3SurfaceMaterial GetSurfaceMaterial( int materialIndex )
 {
 	float flDensity, flThickness, flFriction, flElasticity;
@@ -110,6 +102,27 @@ static b3SurfaceMaterial GetSurfaceMaterial( int materialIndex )
 	material.restitution = flElasticity;
 	material.userMaterialId = static_cast<uint64_t>( materialIndex );
 	return material;
+}
+
+static b3SurfaceMaterial GetConvexMaterial( const CPhysConvex &convex, const b3SurfaceMaterial &objectMaterial )
+{
+	const int nMaterial = convex.GetUniformMaterial();
+	return nMaterial ? GetSurfaceMaterial( g_PhysicsSurfaceProps.GetWorldMaterialIndex( nMaterial ) ) : objectMaterial;
+}
+
+static b3SurfaceMaterial GetMeshMaterial( const CollideMesh_t &mesh, const b3SurfaceMaterial &objectMaterial )
+{
+	return mesh.m_nMaterial ? GetSurfaceMaterial( g_PhysicsSurfaceProps.GetWorldMaterialIndex( mesh.m_nMaterial ) ) : objectMaterial;
+}
+
+static bool HasOwnMaterial( b3ShapeId shape )
+{
+	const void *pUserData = b3Shape_GetUserData( shape );
+	if ( !pUserData )
+		return false;
+	if ( b3Shape_GetType( shape ) == b3_meshShape )
+		return static_cast<const CollideMesh_t *>( pUserData )->m_nMaterial != 0;
+	return static_cast<const CPhysConvex *>( pUserData )->GetUniformMaterial() != 0;
 }
 
 static RealVec3_t RoundToFloat( RealVec3_t v )
@@ -381,6 +394,7 @@ void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex
 	bodyDef.rotation = transform.q;
 	bodyDef.isAwake = false;
 	bodyDef.gravityScale = 0.0f;
+	bodyDef.allowFastRotation = !m_pCollide;
 	bodyDef.userData = this;
 	m_Body = b3CreateBody( m_pEnvironment->GetWorld(), &bodyDef );
 
@@ -405,13 +419,72 @@ void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex
 
 	SetVolume( flVolume );
 	SetGameData( params.pGameData );
+	if ( m_bCollisionEnabled )
+		m_pEnvironment->QueuePenetrationCheck( this );
+}
+
+struct IsolationQuery_t
+{
+	b3BodyId m_Body;
+	b3AABB m_Bounds;
+	bool m_bIsolated;
+};
+
+static bool FindSolverNeighbour( b3ShapeId shape, void *pContext )
+{
+	IsolationQuery_t &query = *static_cast<IsolationQuery_t *>( pContext );
+	if ( B3_ID_EQUALS( b3Shape_GetBody( shape ), query.m_Body ) || b3Shape_IsSensor( shape ) || !b3AABB_Overlaps( b3Shape_GetAABB( shape ), query.m_Bounds ) )
+		return true;
+
+	query.m_bIsolated = false;
+	return false;
+}
+
+bool CPhysicsObject::IsSolverIsolated() const
+{
+	if ( b3Body_GetContactCapacity( m_Body ) > 0 )
+		return false;
+
+	const int nJointCount = b3Body_GetJointCount( m_Body );
+	if ( nJointCount > 0 )
+	{
+		static thread_local std::vector<b3JointId> s_Joints;
+		s_Joints.resize( nJointCount );
+		b3Body_GetJoints( m_Body, s_Joints.data(), nJointCount );
+		for ( b3JointId joint : s_Joints )
+		{
+			if ( b3Joint_GetType( joint ) != b3_filterJoint )
+				return false;
+		}
+	}
+
+	bool bFirst = true;
+	b3AABB bounds = {};
+	ForEachShape( m_Body, [&]( b3ShapeId shape ) {
+		const b3AABB aabb = b3Shape_GetAABB( shape );
+		bounds = bFirst ? aabb : b3AABB_Union( bounds, aabb );
+		bFirst = false;
+	} );
+	if ( bFirst )
+		return true;
+
+	IsolationQuery_t query = { m_Body, bounds, true };
+	b3World_OverlapAABB( m_pEnvironment->GetWorld(), bounds, b3DefaultQueryFilter(), FindSolverNeighbour, &query );
+	return query.m_bIsolated;
+}
+
+void CPhysicsObject::UpdateFastRotation()
+{
+	if ( m_pCollide )
+		b3Body_AllowFastRotation( m_Body, m_pEnvironment->AllowsFastRotation() && IsSolverIsolated() );
 }
 
 void CPhysicsObject::CreateShapes( bool bSensor )
 {
+	const b3SurfaceMaterial objectMaterial = GetSurfaceMaterial( m_nMaterialIndex );
 	b3ShapeDef shapeDef = b3DefaultShapeDef();
-	shapeDef.baseMaterial = GetSurfaceMaterial( m_nMaterialIndex );
-	shapeDef.filter = GetCollisionFilter( m_bCollisionEnabled );
+	shapeDef.baseMaterial = objectMaterial;
+	shapeDef.filter = GetShapeFilter( bSensor );
 	shapeDef.isSensor = bSensor;
 	shapeDef.enableSensorEvents = true;
 	shapeDef.enableContactEvents = true;
@@ -421,19 +494,35 @@ void CPhysicsObject::CreateShapes( bool bSensor )
 	shapeDef.updateBodyMass = false;
 	if ( m_pCollide )
 	{
+		const std::vector<std::unique_ptr<CollideMesh_t>> *pMeshes = m_bStatic && !bSensor ? &m_pCollide->GetStaticMeshes() : nullptr;
+		const bool bMeshed = pMeshes && !pMeshes->empty();
+		if ( bMeshed )
+		{
+			for ( const std::unique_ptr<CollideMesh_t> &pMesh : *pMeshes )
+			{
+				shapeDef.userData = const_cast<CollideMesh_t *>( pMesh.get() );
+				shapeDef.baseMaterial = GetMeshMaterial( *pMesh, objectMaterial );
+				b3CreateMeshShape( m_Body, &shapeDef, pMesh->m_pData, b3Vec3_one );
+			}
+		}
+
 		for ( const std::unique_ptr<CPhysConvex> &pConvex : m_pCollide->GetConvexes() )
 		{
+			if ( bMeshed && pConvex->IsFlat() )
+				continue;
+
 			const b3HullData *pHull = pConvex->GetHull();
 			if ( !pHull )
 				continue;
 
 			shapeDef.userData = const_cast<CPhysConvex *>( pConvex.get() );
+			shapeDef.baseMaterial = GetConvexMaterial( *pConvex, objectMaterial );
 			b3CreateHullShape( m_Body, &shapeDef, pHull );
 		}
 		return;
 	}
 
-	const b3Sphere sphere = { b3Vec3_zero, GetSphereRadius() };
+	const b3Sphere sphere = { b3Vec3_zero, GetSphereRadius() + SHAPE_INFLATION };
 	b3CreateSphereShape( m_Body, &shapeDef, &sphere );
 }
 
@@ -453,29 +542,23 @@ void CPhysicsObject::ResetShapeProxies()
 		b3Shape_SetFilter( shape, changed, false );
 		b3Shape_SetFilter( shape, filter, true );
 	} );
+	if ( m_bCollisionEnabled )
+		m_pEnvironment->QueuePenetrationCheck( this );
 }
 
 bool CPhysicsObject::FindFilterDecision( const CPhysicsObject *pPartner, bool &bCollide ) const
 {
-	auto it = m_FilterDecisions.find( pPartner->m_nId );
-	if ( it == m_FilterDecisions.end() )
-		return false;
-
-	bCollide = it->second.m_bCollide;
-	return true;
+	return m_pEnvironment->GetFilterDecisions().Find( m_nId, pPartner->m_nId, bCollide );
 }
 
 void CPhysicsObject::StoreFilterDecision( CPhysicsObject *pPartner, bool bCollide )
 {
-	m_FilterDecisions[pPartner->m_nId] = { pPartner, bCollide };
-	pPartner->m_FilterDecisions[m_nId] = { this, bCollide };
+	m_pEnvironment->GetFilterDecisions().Store( m_nId, pPartner->m_nId, bCollide );
 }
 
 void CPhysicsObject::ClearFilterDecisions()
 {
-	for ( const auto &[nPartner, decision] : m_FilterDecisions )
-		decision.m_pPartner->m_FilterDecisions.erase( m_nId );
-	m_FilterDecisions.clear();
+	m_pEnvironment->GetFilterDecisions().Invalidate( m_nId );
 }
 
 void CPhysicsObject::QueueVelocityFlush()
@@ -626,6 +709,8 @@ void CPhysicsObject::MoveTo( RealVec3_t origin, RealQuat_t rotation, bool isTele
 
 	if ( bCycleCollisions )
 		EnableCollisions( true );
+	else if ( m_bCollisionEnabled )
+		m_pEnvironment->QueuePenetrationCheck( this );
 }
 
 void CPhysicsObject::StepUp( float height )
@@ -860,10 +945,10 @@ void CPhysicsObject::EnableCollisions( bool enable )
 	{
 		m_nCallbackFlags |= CALLBACK_ENABLING_COLLISION;
 		m_bCollisionEnabled = true;
-		const b3Filter filter = GetCollisionFilter( true );
-		ForEachShape( m_Body, [&]( b3ShapeId shape ) { b3Shape_SetFilter( shape, filter, true ); } );
+		UpdateShapeFilters( true );
 		m_pEnvironment->ResolveFilterDecisions( this, true );
 		m_nCallbackFlags &= ~CALLBACK_ENABLING_COLLISION;
+		m_pEnvironment->QueuePenetrationCheck( this );
 		return;
 	}
 
@@ -873,8 +958,23 @@ void CPhysicsObject::EnableCollisions( bool enable )
 	m_pEnvironment->RemoveAllContacts( this );
 	m_bCollisionEnabled = false;
 	m_pEnvironment->PrepareShapeReset( this );
-	const b3Filter filter = GetCollisionFilter( false );
-	ForEachShape( m_Body, [&]( b3ShapeId shape ) { b3Shape_SetFilter( shape, filter, true ); } );
+	UpdateShapeFilters( true );
+}
+
+b3Filter CPhysicsObject::GetShapeFilter( bool bSensor ) const
+{
+	b3Filter filter = b3DefaultFilter();
+	filter.categoryBits = m_bStatic ? STATIC_SHAPE_BIT : ( m_bMotionEnabled ? MOVING_SHAPE_BIT : PINNED_SHAPE_BIT );
+	if ( !m_bCollisionEnabled )
+		filter.maskBits = 0;
+	else if ( bSensor && !IsMoveable() )
+		filter.maskBits = MOVING_SHAPE_BIT;
+	return filter;
+}
+
+void CPhysicsObject::UpdateShapeFilters( bool bInvokeContacts )
+{
+	ForEachShape( m_Body, [&]( b3ShapeId shape ) { b3Shape_SetFilter( shape, GetShapeFilter( b3Shape_IsSensor( shape ) ), bInvokeContacts ); } );
 }
 
 bool CPhysicsObject::IsGravityEnabled() const
@@ -998,6 +1098,7 @@ void CPhysicsObject::EnableMotion( bool enable )
 	SetCoreAngularVelocity( b3Vec3_zero );
 	m_PendingVelocity = b3Vec3_zero;
 	m_PendingAngularVelocity = b3Vec3_zero;
+	UpdateShapeFilters( false );
 	b3Body_SetType( m_Body, enable ? b3_dynamicBody : b3_kinematicBody );
 	if ( enable )
 	{
@@ -1015,6 +1116,8 @@ void CPhysicsObject::EnableMotion( bool enable )
 
 	RecheckCollisionFilter();
 	RecheckContactPoints();
+	if ( enable && m_bCollisionEnabled )
+		m_pEnvironment->QueuePenetrationCheck( this );
 }
 
 void CPhysicsObject::Wake()
@@ -1097,7 +1200,10 @@ void CPhysicsObject::SetMaterialIndex( int materialIndex )
 	m_nMaterialIndex = static_cast<unsigned short>( materialIndex );
 	m_nCallbackFlags |= CALLBACK_ENABLING_COLLISION;
 	const b3SurfaceMaterial material = GetSurfaceMaterial( materialIndex );
-	ForEachShape( m_Body, [&]( b3ShapeId shape ) { b3Shape_SetSurfaceMaterial( shape, material ); } );
+	ForEachShape( m_Body, [&]( b3ShapeId shape ) {
+		if ( !HasOwnMaterial( shape ) )
+			b3Shape_SetSurfaceMaterial( shape, material );
+	} );
 	m_nCallbackFlags &= ~CALLBACK_ENABLING_COLLISION;
 
 	if ( m_pShadow )
@@ -1495,6 +1601,14 @@ Vector CPhysicsObject::GetInertia() const
 Vector CPhysicsObject::GetInvInertia() const
 {
 	return Vector( std::fabs( m_InvInertia.x ), std::fabs( m_InvInertia.y ), std::fabs( m_InvInertia.z ) );
+}
+
+float CPhysicsObject::GetFrictionInvMass( b3Vec3 r ) const
+{
+	const float flAngularX = ( r.y * r.y + r.z * r.z ) * std::fabs( m_InvInertia.x );
+	const float flAngularY = ( r.x * r.x + r.z * r.z ) * std::fabs( m_InvInertia.y );
+	const float flAngularZ = ( r.x * r.x + r.y * r.y ) * std::fabs( m_InvInertia.z );
+	return m_flInvMass + std::max( std::max( flAngularX, flAngularY ), flAngularZ ) / INERTIA_SCALE;
 }
 
 void CPhysicsObject::ComputeMassProperties( const objectparams_t &params, b3Vec3 massCenter, b3Vec3 unitInertia )

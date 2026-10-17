@@ -1,19 +1,23 @@
 #include "physics_collide.h"
 
 #include "compact_builder/compact_surface.h"
+#include "compact_builder/vector_hash.h"
 #include "conversion.h"
 
 #include "box3d/constants.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <future>
 #include <mutex>
 #include <new>
 
 static constexpr float LEAF_SPHERE_MARGIN = 1.001f;
+static constexpr float MIN_MESH_TRIANGLE_AREA_SCALE = 0.01f;
 
 struct LedgeScan_t
 {
@@ -188,7 +192,7 @@ static CollideMapEntry_t BuildCollideMapEntry( const unsigned char *pLedge, cons
 	return info;
 }
 
-std::unique_ptr<CPhysConvex> ReadLedgeConvex( const unsigned char *pLedge, b3HullData *pHull )
+std::unique_ptr<CPhysConvex> ReadLedgeConvex( const unsigned char *pLedge )
 {
 	const int nTriangleCount = GetLedgeTriangleCount( pLedge );
 	const unsigned char *pPoints = pLedge + GetLedgePointOffset( pLedge );
@@ -213,7 +217,7 @@ std::unique_ptr<CPhysConvex> ReadLedgeConvex( const unsigned char *pLedge, b3Hul
 			triangle.m_nVertices[2 - nEdge] = remap[GetEdgeStartPoint( pTriangle, nEdge )];
 	}
 
-	auto pConvex = std::make_unique<CPhysConvex>( std::move( points ), std::move( triangles ), pHull );
+	auto pConvex = std::make_unique<CPhysConvex>( std::move( points ), std::move( triangles ) );
 	pConvex->SetGameData( GetLedgeClientData( pLedge ) );
 	return pConvex;
 }
@@ -318,16 +322,12 @@ CPhysCollideCompactSurface *CreateCollideFromCompactSurface( const void *pSurfac
 	return CreateCollideFromCompactSurface( surface );
 }
 
-CPhysConvex *CreateConvexFromLedge( std::vector<unsigned char> ledge, b3HullData *pHull )
+CPhysConvex *CreateConvexFromLedge( std::vector<unsigned char> ledge )
 {
 	if ( !IsLedgeReadable( ledge, 0 ) )
-	{
-		if ( pHull )
-			b3DestroyHull( pHull );
 		return nullptr;
-	}
 
-	std::unique_ptr<CPhysConvex> pConvex = ReadLedgeConvex( ledge.data(), pHull );
+	std::unique_ptr<CPhysConvex> pConvex = ReadLedgeConvex( ledge.data() );
 	pConvex->SetLedge( std::move( ledge ) );
 	return pConvex.release();
 }
@@ -346,83 +346,133 @@ static b3HullData *CreateHullWithVertexLimit( const b3Vec3 *pPoints, int nPointC
 	return pHull;
 }
 
-static b3Vec3 ComputePlanarNormal( const b3Vec3 *pPoints, int nPointCount )
+b3HullData *CPhysConvex::CreateTriangleOffsetHull() const
 {
-	if ( nPointCount < 3 )
-		return b3Vec3_zero;
-
-	const b3Vec3 origin = pPoints[0];
-
-	int nFarthest = 0;
-	float flFarthestDistance = 0.0f;
-	for ( int i = 1; i < nPointCount; ++i )
+	std::vector<b3Vec3> points;
+	points.reserve( m_Triangles.size() * 3 );
+	for ( const Triangle_t &triangle : m_Triangles )
 	{
-		const float flDistance = b3LengthSquared( b3Sub( pPoints[i], origin ) );
-		if ( flDistance > flFarthestDistance )
-		{
-			flFarthestDistance = flDistance;
-			nFarthest = i;
-		}
+		const b3Vec3 a = m_Points[triangle.m_nVertices[0]];
+		const b3Vec3 b = m_Points[triangle.m_nVertices[1]];
+		const b3Vec3 c = m_Points[triangle.m_nVertices[2]];
+		const b3Vec3 normal = b3Cross( b3Sub( c, a ), b3Sub( b, a ) );
+		const float flLength = b3Length( normal );
+		if ( flLength <= 0.0f )
+			continue;
+
+		const b3Vec3 offset = b3MulSV( SHAPE_INFLATION / flLength, normal );
+		points.push_back( b3Add( a, offset ) );
+		points.push_back( b3Add( b, offset ) );
+		points.push_back( b3Add( c, offset ) );
 	}
 
-	const b3Vec3 axis = b3Sub( pPoints[nFarthest], origin );
-
-	b3Vec3 normal = b3Vec3_zero;
-	float flLargestArea = 0.0f;
-	for ( int i = 1; i < nPointCount; ++i )
-	{
-		const b3Vec3 cross = b3Cross( axis, b3Sub( pPoints[i], origin ) );
-		const float flArea = b3LengthSquared( cross );
-		if ( flArea > flLargestArea )
-		{
-			flLargestArea = flArea;
-			normal = cross;
-		}
-	}
-
-	return flLargestArea > 0.0f ? b3Normalize( normal ) : b3Vec3_zero;
+	return points.empty() ? nullptr : CreateHullWithVertexLimit( points.data(), static_cast<int>( points.size() ) );
 }
 
-b3HullData *CPhysConvex::CreateHull( const b3Vec3 *pPoints, int nPointCount )
+static std::vector<b3Vec3> IntersectPlanes( const std::vector<b3Vec3> &normals, const std::vector<float> &offsets, float flTolerance )
 {
-	if ( b3HullData *pHull = CreateHullWithVertexLimit( pPoints, nPointCount ) )
-		return pHull;
+	static constexpr float MIN_DETERMINANT = 1e-6f;
 
-	const b3Vec3 normal = ComputePlanarNormal( pPoints, nPointCount );
-	if ( b3LengthSquared( normal ) == 0.0f )
-		return nullptr;
-
-	const b3Vec3 offset = b3MulSV( B3_LINEAR_SLOP, normal );
-
-	std::vector<b3Vec3> slab;
-	slab.reserve( nPointCount * 2 );
-	for ( int i = 0; i < nPointCount; ++i )
+	std::vector<b3Vec3> points;
+	const size_t nCount = normals.size();
+	for ( size_t i = 0; i < nCount; ++i )
 	{
-		slab.push_back( b3Add( pPoints[i], offset ) );
-		slab.push_back( b3Sub( pPoints[i], offset ) );
-	}
+		for ( size_t j = i + 1; j < nCount; ++j )
+		{
+			const b3Vec3 cross = b3Cross( normals[i], normals[j] );
+			for ( size_t k = j + 1; k < nCount; ++k )
+			{
+				const float flDeterminant = b3Dot( cross, normals[k] );
+				if ( std::fabs( flDeterminant ) < MIN_DETERMINANT )
+					continue;
 
-	return CreateHullWithVertexLimit( slab.data(), static_cast<int>( slab.size() ) );
+				const b3Vec3 sum = b3Add( b3Add( b3MulSV( offsets[i], b3Cross( normals[j], normals[k] ) ), b3MulSV( offsets[j], b3Cross( normals[k], normals[i] ) ) ), b3MulSV( offsets[k], cross ) );
+				const b3Vec3 point = b3MulSV( 1.0f / flDeterminant, sum );
+				bool bInside = true;
+				for ( size_t m = 0; m < nCount && bInside; ++m )
+					bInside = b3Dot( normals[m], point ) <= offsets[m] + flTolerance;
+				if ( bInside )
+					points.push_back( point );
+			}
+		}
+	}
+	return points;
 }
 
-CPhysConvex::CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> triangles, b3HullData *pHull )
+b3HullData *CPhysConvex::CreateHull( b3HullData *pBase ) const
+{
+	static constexpr float INTERSECTION_TOLERANCE = 1e-3f;
+
+	const b3Vec3 center = pBase->center;
+	const b3Plane *pPlanes = b3GetHullPlanes( pBase );
+	float flScale = 0.0f;
+	for ( const b3Vec3 &point : m_Points )
+		flScale = std::max( flScale, b3DistanceSquared( point, center ) );
+
+	std::vector<b3Vec3> normals( pBase->faceCount ), dual( pBase->faceCount );
+	std::vector<float> offsets( pBase->faceCount );
+	for ( int i = 0; i < pBase->faceCount; ++i )
+	{
+		float flExtent = 0.0f;
+		for ( const b3Vec3 &point : m_Points )
+			flExtent = std::max( flExtent, b3Dot( pPlanes[i].normal, b3Sub( point, center ) ) );
+		normals[i] = pPlanes[i].normal;
+		offsets[i] = flExtent + SHAPE_INFLATION;
+		dual[i] = b3MulSV( flScale / offsets[i], normals[i] );
+	}
+	b3DestroyHull( pBase );
+
+	std::vector<b3Vec3> points;
+	if ( b3HullData *pDual = b3CreateHull( dual.data(), static_cast<int>( dual.size() ), B3_MAX_HULL_VERTICES ) )
+	{
+		const b3Plane *pDualPlanes = b3GetHullPlanes( pDual );
+		points.resize( pDual->faceCount );
+		for ( int i = 0; i < pDual->faceCount; ++i )
+			points[i] = b3MulSV( flScale / pDualPlanes[i].offset, pDualPlanes[i].normal );
+		b3DestroyHull( pDual );
+	}
+	else
+	{
+		points = IntersectPlanes( normals, offsets, INTERSECTION_TOLERANCE * std::sqrt( flScale ) );
+	}
+
+	for ( b3Vec3 &point : points )
+		point = b3Add( point, center );
+	return points.empty() ? CreateTriangleOffsetHull() : CreateHullWithVertexLimit( points.data(), static_cast<int>( points.size() ) );
+}
+
+CPhysConvex::CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> triangles )
 : m_Points( std::move( points ) )
 , m_Triangles( std::move( triangles ) )
-, m_pHull( pHull )
 {
 }
 
 static std::mutex s_LazyBuildMutex;
 
-void CPhysConvex::BuildHull() const
+void CPhysConvex::ClassifyHull() const
 {
 	std::lock_guard lock( s_LazyBuildMutex );
-	if ( m_bHullBuilt.load( std::memory_order_relaxed ) )
+	if ( m_nHullState.load( std::memory_order_relaxed ) != HULL_UNCLASSIFIED )
 		return;
 
-	if ( !m_pHull )
-		m_pHull = CreateHull( m_Points.data(), static_cast<int>( m_Points.size() ) );
-	m_bHullBuilt.store( true, std::memory_order_release );
+	b3HullData *pBase = CreateHullWithVertexLimit( m_Points.data(), static_cast<int>( m_Points.size() ) );
+	m_bFlat = !pBase;
+	if ( pBase )
+		m_pHull = CreateHull( pBase );
+	m_nHullState.store( pBase ? HULL_BUILT : HULL_FLAT, std::memory_order_release );
+}
+
+void CPhysConvex::BuildHull() const
+{
+	if ( !IsFlat() )
+		return;
+
+	std::lock_guard lock( s_LazyBuildMutex );
+	if ( m_nHullState.load( std::memory_order_relaxed ) == HULL_BUILT )
+		return;
+
+	m_pHull = CreateTriangleOffsetHull();
+	m_nHullState.store( HULL_BUILT, std::memory_order_release );
 }
 
 void CPhysConvex::SetGameData( unsigned int nGameData )
@@ -438,6 +488,189 @@ CPhysConvex::~CPhysConvex()
 		b3DestroyHull( m_pHull );
 }
 
+CollideMesh_t::~CollideMesh_t()
+{
+	if ( m_pData )
+		b3DestroyMesh( m_pData );
+}
+
+static bool GetMeshTriangleNormal( const CPhysConvex &convex, const CPhysConvex::Triangle_t &triangle, b3Vec3 &normal )
+{
+	const std::vector<b3Vec3> &points = convex.GetPoints();
+	const b3Vec3 a = points[triangle.m_nVertices[0]];
+	float flLength = 0.0f;
+	normal = b3GetLengthAndNormalize( &flLength, b3Cross( b3Sub( points[triangle.m_nVertices[2]], a ), b3Sub( points[triangle.m_nVertices[1]], a ) ) );
+	return 0.5f * flLength >= MIN_MESH_TRIANGLE_AREA_SCALE * B3_LINEAR_SLOP * B3_LINEAR_SLOP;
+}
+
+struct StaticMeshTriangle_t
+{
+	int m_nConvex;
+	int m_nTriangle;
+	b3Vec3 m_Normal;
+};
+
+static std::unique_ptr<CollideMesh_t> CreateStaticMesh( const std::vector<std::unique_ptr<CPhysConvex>> &convexes, int nMaterial, const std::vector<StaticMeshTriangle_t> &triangles )
+{
+	static constexpr float FLAT_EDGE_COSINE = 0.9962f;
+
+	using PointTable_t = CVectorHash<3>;
+
+	struct Cluster_t
+	{
+		b3Vec3 m_Normal;
+		b3Vec3 m_Sum;
+		int m_nPoint;
+		int m_nNext;
+	};
+
+	std::vector<b3Vec3> points;
+	std::vector<int> heads;
+	std::vector<Cluster_t> clusters;
+	PointTable_t table( 3 * triangles.size() );
+	auto findCluster = [&]( b3Vec3 point, b3Vec3 normal ) {
+		point = { point.x + 0.0f, point.y + 0.0f, point.z + 0.0f };
+		const auto [nPoint, bInserted] = table.FindOrInsert( std::bit_cast<PointTable_t::Key_t>( point ), static_cast<uint32_t>( points.size() ), [&]( uint32_t nIndex ) { return std::bit_cast<PointTable_t::Key_t>( points[nIndex] ); } );
+		if ( bInserted )
+		{
+			points.push_back( point );
+			heads.push_back( -1 );
+		}
+
+		for ( int nCluster = heads[nPoint]; nCluster >= 0; nCluster = clusters[nCluster].m_nNext )
+		{
+			if ( b3Dot( clusters[nCluster].m_Normal, normal ) > FLAT_EDGE_COSINE )
+			{
+				clusters[nCluster].m_Sum = b3Add( clusters[nCluster].m_Sum, normal );
+				return nCluster;
+			}
+		}
+
+		clusters.push_back( { normal, normal, static_cast<int>( nPoint ), heads[nPoint] } );
+		heads[nPoint] = static_cast<int>( clusters.size() ) - 1;
+		return heads[nPoint];
+	};
+
+	std::unique_ptr<CollideMesh_t> pMesh = std::make_unique<CollideMesh_t>();
+	pMesh->m_nMaterial = nMaterial;
+	pMesh->m_Sources.reserve( triangles.size() );
+	std::vector<int32_t> indices;
+	indices.reserve( 3 * triangles.size() );
+	for ( const StaticMeshTriangle_t &entry : triangles )
+	{
+		const CPhysConvex &convex = *convexes[entry.m_nConvex];
+		const std::vector<b3Vec3> &convexPoints = convex.GetPoints();
+		const CPhysConvex::Triangle_t &triangle = convex.GetTriangles()[entry.m_nTriangle];
+		const b3Vec3 a = convexPoints[triangle.m_nVertices[0]];
+		const b3Vec3 b = convexPoints[triangle.m_nVertices[1]];
+		const b3Vec3 c = convexPoints[triangle.m_nVertices[2]];
+		indices.insert( indices.end(), { findCluster( a, entry.m_Normal ), findCluster( c, entry.m_Normal ), findCluster( b, entry.m_Normal ) } );
+		pMesh->m_Sources.push_back( { entry.m_nConvex, entry.m_nTriangle } );
+	}
+
+	const float flOffset = SHAPE_INFLATION - B3_MESH_REST_OFFSET;
+	std::vector<b3Vec3> vertices( clusters.size() );
+	for ( size_t i = 0; i < clusters.size(); ++i )
+		vertices[i] = b3MulAdd( points[clusters[i].m_nPoint], flOffset, b3Normalize( clusters[i].m_Sum ) );
+
+	b3MeshDef def = {};
+	def.vertices = vertices.data();
+	def.indices = indices.data();
+	def.vertexCount = static_cast<int>( vertices.size() );
+	def.triangleCount = static_cast<int>( pMesh->m_Sources.size() );
+	def.identifyEdges = true;
+	pMesh->m_pData = b3CreateMesh( &def, nullptr, 0 );
+	if ( !pMesh->m_pData )
+		return nullptr;
+
+	using Key_t = std::array<int32_t, 3>;
+	std::vector<std::pair<Key_t, int>> order( pMesh->m_Sources.size() );
+	for ( size_t i = 0; i < order.size(); ++i )
+		order[i] = { { indices[3 * i], indices[3 * i + 1], indices[3 * i + 2] }, static_cast<int>( i ) };
+	std::sort( order.begin(), order.end() );
+
+	const b3MeshTriangle *pTriangles = b3GetMeshTriangles( pMesh->m_pData );
+	std::vector<CollideMesh_t::Source_t> sources( pMesh->m_pData->triangleCount );
+	std::vector<bool> used( order.size(), false );
+	for ( size_t i = 0; i < sources.size(); ++i )
+	{
+		const Key_t key = { pTriangles[i].index1, pTriangles[i].index2, pTriangles[i].index3 };
+		auto it = std::lower_bound( order.begin(), order.end(), key, []( const std::pair<Key_t, int> &entry, const Key_t &value ) { return entry.first < value; } );
+		while ( used[it - order.begin()] )
+			++it;
+		used[it - order.begin()] = true;
+		sources[i] = pMesh->m_Sources[it->second];
+	}
+	pMesh->m_Sources = std::move( sources );
+	return pMesh;
+}
+
+static std::vector<std::unique_ptr<CollideMesh_t>> CreateStaticMeshes( const std::vector<std::unique_ptr<CPhysConvex>> &convexes )
+{
+	std::array<std::vector<StaticMeshTriangle_t>, 256> buckets;
+	for ( size_t nConvex = 0; nConvex < convexes.size(); ++nConvex )
+	{
+		const CPhysConvex &convex = *convexes[nConvex];
+		if ( !convex.IsFlat() )
+			continue;
+
+		const std::vector<CPhysConvex::Triangle_t> &triangles = convex.GetTriangles();
+		for ( size_t nTriangle = 0; nTriangle < triangles.size(); ++nTriangle )
+		{
+			b3Vec3 normal;
+			if ( GetMeshTriangleNormal( convex, triangles[nTriangle], normal ) )
+				buckets[triangles[nTriangle].m_nMaterialIndex].push_back( { static_cast<int>( nConvex ), static_cast<int>( nTriangle ), normal } );
+		}
+	}
+
+	std::vector<int> materials;
+	for ( int nMaterial = 0; nMaterial < static_cast<int>( buckets.size() ); ++nMaterial )
+	{
+		if ( !buckets[nMaterial].empty() )
+			materials.push_back( nMaterial );
+	}
+
+	std::vector<std::future<std::unique_ptr<CollideMesh_t>>> pending;
+	for ( size_t i = 1; i < materials.size(); ++i )
+		pending.push_back( std::async( std::launch::async, CreateStaticMesh, std::cref( convexes ), materials[i], std::cref( buckets[materials[i]] ) ) );
+
+	std::vector<std::unique_ptr<CollideMesh_t>> meshes;
+	if ( !materials.empty() )
+		meshes.push_back( CreateStaticMesh( convexes, materials[0], buckets[materials[0]] ) );
+	for ( std::future<std::unique_ptr<CollideMesh_t>> &future : pending )
+		meshes.push_back( future.get() );
+
+	if ( std::any_of( meshes.begin(), meshes.end(), []( const std::unique_ptr<CollideMesh_t> &pMesh ) { return !pMesh; } ) )
+		return {};
+	return meshes;
+}
+
+static std::mutex s_StaticMeshMutex;
+
+void CPhysCollide::BuildStaticMeshes() const
+{
+	std::lock_guard lock( s_StaticMeshMutex );
+	if ( m_bStaticMeshesBuilt.load( std::memory_order_relaxed ) )
+		return;
+
+	m_StaticMeshes = CreateStaticMeshes( GetConvexes() );
+	m_bStaticMeshesBuilt.store( true, std::memory_order_release );
+}
+
+int CPhysConvex::GetUniformMaterial() const
+{
+	if ( m_Triangles.empty() )
+		return 0;
+
+	const int nMaterial = m_Triangles.front().m_nMaterialIndex;
+	for ( const Triangle_t &triangle : m_Triangles )
+	{
+		if ( triangle.m_nMaterialIndex != nMaterial )
+			return 0;
+	}
+	return nMaterial;
+}
+
 int CPhysConvex::FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) const
 {
 	static constexpr float COPLANAR_TOLERANCE = 1e-4f;
@@ -448,7 +681,7 @@ int CPhysConvex::FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) c
 		for ( const Triangle_t &triangle : m_Triangles )
 		{
 			const b3Vec3 a = m_Points[triangle.m_nVertices[0]];
-			const b3Vec3 normal = b3Cross( b3Sub( m_Points[triangle.m_nVertices[1]], a ), b3Sub( m_Points[triangle.m_nVertices[2]], a ) );
+			const b3Vec3 normal = b3Cross( b3Sub( m_Points[triangle.m_nVertices[2]], a ), b3Sub( m_Points[triangle.m_nVertices[1]], a ) );
 			const float flLength = b3Length( normal );
 			m_TriangleNormals.push_back( flLength > 0.0f ? b3MulSV( 1.0f / flLength, normal ) : b3Vec3_zero );
 		}
@@ -472,8 +705,8 @@ int CPhysConvex::FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) c
 		bool bInside = true;
 		for ( int nEdge = 0; nEdge < 3 && bInside; ++nEdge )
 		{
-			const b3Vec3 start = m_Points[triangle.m_nVertices[nEdge]];
-			const b3Vec3 end = m_Points[triangle.m_nVertices[( nEdge + 1 ) % 3]];
+			const b3Vec3 start = m_Points[triangle.m_nVertices[( nEdge + 1 ) % 3]];
+			const b3Vec3 end = m_Points[triangle.m_nVertices[nEdge]];
 			bInside = b3Dot( b3Cross( b3Sub( end, start ), b3Sub( localPoint, start ) ), normal ) >= 0.0f;
 		}
 

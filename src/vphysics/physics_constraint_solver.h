@@ -100,6 +100,8 @@ public:
 
 	Limit_t &GetLimit( Slot_t nSlot ) { return m_Limits[nSlot]; }
 
+	const Limit_t &GetLimit( Slot_t nSlot ) const { return m_Limits[nSlot]; }
+
 private:
 	struct Row_t
 	{

@@ -1,0 +1,75 @@
+name: Physics difference
+description: Something moves, collides or reacts differently compared to the game's original physics.
+labels: [ parity ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when something moves, collides or reacts differently compared to the game's original physics. VPhysics Box3D aims to behave the same way, so any difference is worth reporting.
+
+        A short side-by-side video of both versions is the most useful thing you can attach, it shows the difference much better than a description can.
+
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Garry's Mod
+        - Source SDK 2013 Multiplayer game or mod
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: Where you got your `vphysics` binary from. A release, a CI artifact, or a commit hash if you built it yourself.
+      placeholder: CI artifact from commit a3ac0d2
+    validations:
+      required: true
+
+  - type: textarea
+    id: stock
+    attributes:
+      label: With the original physics
+      description: What happens with the game's original `vphysics`.
+      placeholder: The crate slides a few feet and stops.
+    validations:
+      required: true
+
+  - type: textarea
+    id: box3d
+    attributes:
+      label: With VPhysics Box3D
+      description: What happens with VPhysics Box3D installed.
+      placeholder: The crate keeps sliding across the whole room.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it
+      description: The map, the props involved, and what exactly you did.
+      placeholder: |
+        1. Load gm_construct
+        2. Spawn models/props_junk/wood_crate001a.mdl
+        3. Push it with the physgun and let go
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Videos or screenshots
+      description: Drag files here, or paste links to them.

@@ -1,0 +1,71 @@
+name: Bug report
+description: The game crashes, prints errors, or something stops working after installing VPhysics Box3D.
+labels: [ bug ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form if the game crashes, prints errors, or something stops working with VPhysics Box3D installed. If objects just behave differently compared to the game's original physics, use the **Physics difference** form instead.
+
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Garry's Mod
+        - Source SDK 2013 Multiplayer game or mod
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: Where you got your `vphysics` binary from. A release, a CI artifact, or a commit hash if you built it yourself.
+      placeholder: CI artifact from commit a3ac0d2
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong
+      description: Describe what happened and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: Steps that make it happen every time. Keep in mind that a map name and a few steps is usually enough, the shorter the better.
+      placeholder: |
+        1. Load gm_construct
+        2. Spawn a few explosive barrels
+        3. Shoot one
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output or crash dump
+      description: Paste anything relevant from the console. If the game crashed, attach the crash dump (`.mdmp`) as well.
+      render: shell
+
+  - type: checkboxes
+    id: stock
+    attributes:
+      label: Stock physics
+      options:
+        - label: This doesn't happen with the game's original `vphysics`.

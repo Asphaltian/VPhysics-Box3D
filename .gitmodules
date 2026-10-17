@@ -1,6 +1,8 @@
-[submodule "box3d"]
-	path = box3d
+[submodule "external/box3d"]
+	path = external/box3d
 	url = https://github.com/erincatto/box3d.git
-[submodule "sdk/mini-source-sdk"]
-	path = sdk/mini-source-sdk
-	url = https://github.com/RaphaelIT7/mini-source-sdk
+	shallow = true
+[submodule "external/source-sdk-2013"]
+	path = external/source-sdk-2013
+	url = https://github.com/ValveSoftware/source-sdk-2013.git
+	shallow = true

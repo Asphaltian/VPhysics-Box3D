@@ -1,12 +1,12 @@
-# VPhysics-Box3D
+# VPhysics Box3D
 
-Source VPhysics (IVP/Havok) reimplemented on [Box3D](https://github.com/erincatto/box3d). Modelled on [VPhysics-Jolt](https://github.com/Joshua-Ashton/VPhysics-Jolt) (Volt).
+This is a reimplementation of Source VPhysics (IVP/Havok) on [Box3D](https://github.com/erincatto/box3d).
 
 For discussions, please join the Discord server [here](https://discord.gg/rbCJdZjewf).
 
-## Status
+## Features
 
-| Feature | VPhysics | Volt | Vox3D |
+| Feature | VPhysics | Volt | VBox3D |
 |:--|:--:|:--:|:--:|
 | Constraints (except pulleys) | ✔️ | ✔️ | ✔️ |
 | Pulleys | ✔️ | ✔️ | ✔️ |
@@ -32,23 +32,45 @@ For discussions, please join the Discord server [here](https://discord.gg/rbCJdZ
 
 ## Platforms
 
-Build status per CMake preset. Future support for macOS is unknown.
-
 | Preset | Builds | Tested |
 |:--|:--:|:--:|
-| `gmod-x64` | ✔️ | ✔️ |
-| `gmod-x86` | ✔️ |  |
-| `gmod-linux-x86` | ✔️ |  |
-| `gmod-linux-x64` | ✔️ | ✔️ |
-| `gmod-linux-x86-dedicated` | ✔️ |  |
-| `gmod-linux-x64-dedicated` | ✔️ |  |
-| `sdk2013-mp` | ✔️ |  |
-| `sdk2013-mp-linux` | ✔️ |  |
-| `sdk2013-sp` | ✔️ |  |
-| `sdk2013-sp-linux` | ✔️ |  |
-| `asw` | ✔️ |  |
+| `gmod-windows-x64` | ✔️ | ✔️ |
+| `gmod-linux-x64` | ✔️ |  |
+| `sdk2013-windows-x64` | ✔️ |  |
+| `sdk2013-linux-x64` | ✔️ |  |
 
-To build, see: [build.md](build.md)
+## Building
+
+You'll need:
+
+* **CMake** 3.25 or newer
+* **Windows:** Visual Studio 2026 with the **Desktop development with C++** workload
+* **Linux:** Ninja and GCC 14
+
+Clone the repository with its submodules:
+
+```
+git clone --recursive https://github.com/Asphaltian/VPhysics-Box3D.git
+cd VPhysics-Box3D
+```
+
+Then configure and build the preset for your game, for example:
+
+```
+cmake --preset gmod-windows-x64
+cmake --build --preset gmod-windows-x64-release
+```
+
+The library ends up in `build/<preset>/src/Release/`, as `vphysics.dll` on Windows and `vphysics.so` on Linux. Swap `-release` for `-debug` if you need a debug build.
+
+## Installing
+
+Replace the game's own `vphysics` library with the one you built:
+
+* **Garry's Mod:** `GarrysMod/bin/win64` or `GarrysMod/bin/linux64`
+* **Source SDK Base 2013 Multiplayer:** `bin/x64` or `bin/linux64`
+
+Keep in mind that Steam puts the original back whenever it verifies or updates the game files, so back it up and copy yours over again afterwards.
 
 ## Media
 
@@ -70,8 +92,8 @@ To build, see: [build.md](build.md)
 ## Credits
 
 * [Box3D](https://github.com/erincatto/box3d) by Erin Catto
-* [Volt](https://github.com/Joshua-Ashton/VPhysics-Jolt) by Joshua Ashton and Josh Dowell
+* Inspired by [Volt](https://github.com/Joshua-Ashton/VPhysics-Jolt) by Joshua Ashton and Josh Dowell
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Box3D and Source SDK code retain their respective licenses.
+MIT, see [LICENSE](LICENSE). Box3D, qhull and Source SDK code retain their respective licenses.

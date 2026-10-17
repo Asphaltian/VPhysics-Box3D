@@ -65,9 +65,7 @@ public:
 		unsigned char m_nMaterialIndex;
 	};
 
-	static b3HullData *CreateHull( const b3Vec3 *pPoints, int nPointCount );
-
-	CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> triangles, b3HullData *pHull = nullptr );
+	CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> triangles );
 	~CPhysConvex();
 
 	CPhysConvex( const CPhysConvex & ) = delete;
@@ -75,9 +73,16 @@ public:
 
 	const b3HullData *GetHull() const
 	{
-		if ( !m_bHullBuilt.load( std::memory_order_acquire ) )
+		if ( m_nHullState.load( std::memory_order_acquire ) != HULL_BUILT )
 			BuildHull();
 		return m_pHull;
+	}
+
+	bool IsFlat() const
+	{
+		if ( m_nHullState.load( std::memory_order_acquire ) == HULL_UNCLASSIFIED )
+			ClassifyHull();
+		return m_bFlat;
 	}
 
 	const std::vector<unsigned char> &GetLedge() const { return m_Ledge; }
@@ -97,8 +102,19 @@ public:
 	float GetVolume() const;
 	float GetSurfaceArea() const;
 	int FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) const;
+	int GetUniformMaterial() const;
 
 private:
+	enum : uint8_t
+	{
+		HULL_UNCLASSIFIED,
+		HULL_FLAT,
+		HULL_BUILT,
+	};
+
+	b3HullData *CreateHull( b3HullData *pBase ) const;
+	b3HullData *CreateTriangleOffsetHull() const;
+	void ClassifyHull() const;
 	void BuildHull() const;
 
 	std::vector<b3Vec3> m_Points;
@@ -106,8 +122,28 @@ private:
 	mutable std::vector<b3Vec3> m_TriangleNormals;
 	std::vector<unsigned char> m_Ledge;
 	mutable b3HullData *m_pHull = nullptr;
-	mutable std::atomic<bool> m_bHullBuilt = false;
+	mutable std::atomic<uint8_t> m_nHullState = HULL_UNCLASSIFIED;
+	mutable bool m_bFlat = false;
 	unsigned int m_nGameData = 0;
+};
+
+struct CollideMesh_t
+{
+	struct Source_t
+	{
+		int m_nConvex;
+		int m_nTriangle;
+	};
+
+	CollideMesh_t() = default;
+	~CollideMesh_t();
+
+	CollideMesh_t( const CollideMesh_t & ) = delete;
+	CollideMesh_t &operator=( const CollideMesh_t & ) = delete;
+
+	b3MeshData *m_pData = nullptr;
+	std::vector<Source_t> m_Sources;
+	int m_nMaterial = 0;
 };
 
 class CPhysCollideCompactSurface;
@@ -116,6 +152,13 @@ class CPhysCollide
 {
 public:
 	virtual ~CPhysCollide() = default;
+
+	const std::vector<std::unique_ptr<CollideMesh_t>> &GetStaticMeshes() const
+	{
+		if ( !m_bStaticMeshesBuilt.load( std::memory_order_acquire ) )
+			BuildStaticMeshes();
+		return m_StaticMeshes;
+	}
 
 	virtual const CPhysCollideCompactSurface *GetCompactSurface() const { return nullptr; }
 
@@ -141,6 +184,12 @@ public:
 
 	virtual void GetAABB( Vector *pMins, Vector *pMaxs, const b3Transform &transform ) const;
 	virtual Vector GetExtent( const b3Transform &transform, const Vector &direction ) const;
+
+private:
+	void BuildStaticMeshes() const;
+
+	mutable std::vector<std::unique_ptr<CollideMesh_t>> m_StaticMeshes;
+	mutable std::atomic<bool> m_bStaticMeshesBuilt = false;
 };
 
 class CPhysCollideCompactSurface final : public CPhysCollide
@@ -268,7 +317,7 @@ private:
 	Vector m_OrthographicAreas = Vector( 1.0f, 1.0f, 1.0f );
 };
 
-std::unique_ptr<CPhysConvex> ReadLedgeConvex( const unsigned char *pLedge, b3HullData *pHull = nullptr );
-CPhysConvex *CreateConvexFromLedge( std::vector<unsigned char> ledge, b3HullData *pHull = nullptr );
+std::unique_ptr<CPhysConvex> ReadLedgeConvex( const unsigned char *pLedge );
+CPhysConvex *CreateConvexFromLedge( std::vector<unsigned char> ledge );
 CPhysCollideCompactSurface *CreateCollideFromCompactSurface( const std::vector<unsigned char> &surface );
 CPhysCollideCompactSurface *CreateCollideFromCompactSurface( const void *pSurface, size_t nSize, bool bSwap );

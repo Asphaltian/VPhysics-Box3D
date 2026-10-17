@@ -11,7 +11,6 @@
 #include "box3d/math_functions.h"
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 class CPhysCollide;
@@ -20,7 +19,12 @@ class CPhysicsEnvironment;
 class CPhysicsSpring;
 class CPhysicsVehicleController;
 class IController;
+struct FrictionContact_t;
 struct vphysics_save_cphysicsobject_t;
+
+inline constexpr uint64_t MOVING_SHAPE_BIT = 1;
+inline constexpr uint64_t STATIC_SHAPE_BIT = 2;
+inline constexpr uint64_t PINNED_SHAPE_BIT = 4;
 
 class CPhysicsObject final : public IPhysicsObject
 {
@@ -98,6 +102,8 @@ public:
 	float GetMass() const override { return m_flMass; }
 
 	float GetInvMass() const override { return m_flInvMass; }
+
+	float GetFrictionInvMass( b3Vec3 localOffset ) const;
 
 	Vector GetInertia() const override;
 	Vector GetInvInertia() const override;
@@ -265,6 +271,7 @@ public:
 	void ApplyGravity( float flTimestep, RealVec3_t gravity, bool bWorldGravity );
 	void ApplyDrag( float flTimestep, float flAirDensity );
 	void ClampStepVelocity();
+	void UpdateFastRotation();
 
 	void AttachController( IController *pController );
 	void DetachController( IController *pController );
@@ -276,6 +283,10 @@ public:
 	std::vector<uint64_t> &GetContactKeys() { return m_ContactKeys; }
 
 	const std::vector<uint64_t> &GetContactKeys() const { return m_ContactKeys; }
+
+	FrictionContact_t *GetFrictionHead() const { return m_pFrictionHead; }
+
+	void SetFrictionHead( FrictionContact_t *pFriction ) { m_pFrictionHead = pFriction; }
 
 	void ResetControllerCursor() { m_nControllerCursor = static_cast<int>( m_ControllerOrder.size() ) - 1; }
 
@@ -363,7 +374,10 @@ private:
 	b3Vec3 GetCoreOffset( const Vector &worldPosition ) const;
 	b3Vec3 GetBodyAngularVelocity( b3Vec3 coreAngular ) const;
 	void ComputeMassProperties( const objectparams_t &params, b3Vec3 massCenter, b3Vec3 unitInertia );
+	bool IsSolverIsolated() const;
 	void CreateShapes( bool bSensor );
+	b3Filter GetShapeFilter( bool bSensor ) const;
+	void UpdateShapeFilters( bool bInvokeContacts );
 	void DestroyShapes();
 	void SetVolume( float volume );
 	void ComputeDragBases();
@@ -371,22 +385,16 @@ private:
 	void UpdateMassData();
 	void QueuePendingVelocity();
 
-	struct FilterDecision_t
-	{
-		CPhysicsObject *m_pPartner;
-		bool m_bCollide;
-	};
-
 	CPhysicsEnvironment *m_pEnvironment;
 	b3BodyId m_Body = b3_nullBodyId;
 	uint32_t m_nId = 0;
-	std::unordered_map<uint32_t, FilterDecision_t> m_FilterDecisions;
 	b3AABB m_FilterBounds = {};
 	std::vector<IController *> m_Controllers;
 	std::vector<IController *> m_ControllerOrder;
 	std::vector<CPhysicsConstraint *> m_Constraints;
 	std::vector<CPhysicsSpring *> m_Springs;
 	std::vector<uint64_t> m_ContactKeys;
+	FrictionContact_t *m_pFrictionHead = nullptr;
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	uint32_t m_nPreStepCount = 0;

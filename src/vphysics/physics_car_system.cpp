@@ -4,6 +4,7 @@
 #include "physics_environment.h"
 #include "physics_object.h"
 #include "physics_surface_props.h"
+#include "physics_trace.h"
 
 #include "bspflags.h"
 #include "cmodel.h"
@@ -656,16 +657,49 @@ struct RayHit_t
 	float m_flFraction;
 };
 
-static float CollectNearestHit( b3ShapeId shapeId, b3Pos, b3Vec3 normal, float fraction, uint64_t, int, int, void *pContext )
+static bool CollectRayCandidate( b3ShapeId shapeId, void *pContext )
 {
-	if ( normal.x == 0.0f && normal.y == 0.0f && normal.z == 0.0f )
-		return -1.0f;
+	std::vector<CPhysicsObject *> &candidates = *static_cast<std::vector<CPhysicsObject *> *>( pContext );
+	CPhysicsObject *pObject = static_cast<CPhysicsObject *>( b3Body_GetUserData( b3Shape_GetBody( shapeId ) ) );
+	if ( std::find( candidates.begin(), candidates.end(), pObject ) == candidates.end() )
+		candidates.push_back( pObject );
+	return true;
+}
 
-	RayHit_t &hit = *static_cast<RayHit_t *>( pContext );
-	hit.m_pObject = static_cast<CPhysicsObject *>( b3Body_GetUserData( b3Shape_GetBody( shapeId ) ) );
-	hit.m_Normal = normal;
-	hit.m_flFraction = fraction;
-	return fraction;
+static void TraceWheelRay( CPhysicsObject *pObject, const Vector &start, const Vector &end, RayHit_t &hit )
+{
+	if ( const CPhysCollide *pCollide = pObject->GetCollide() )
+	{
+		Vector origin;
+		QAngle angles;
+		pObject->GetPosition( &origin, &angles );
+		Ray_t ray;
+		ray.Init( start, end );
+		trace_t trace;
+		TraceBoxAgainstCollide( ray, MASK_ALL, nullptr, pCollide, origin, angles, &trace );
+		if ( !trace.startsolid && trace.fraction < hit.m_flFraction )
+			hit = { pObject, ToBox3D( trace.plane.normal ), trace.fraction };
+		return;
+	}
+
+	Vector center;
+	pObject->GetPosition( &center, nullptr );
+	const float flRadius = pObject->GetSphereRadius();
+	const Vector delta = end - start;
+	const Vector offset = start - center;
+	const float a = delta.Dot( delta );
+	const float b = offset.Dot( delta );
+	const float c = offset.Dot( offset ) - flRadius * flRadius;
+	const float flDiscriminant = b * b - a * c;
+	if ( c <= 0.0f || flDiscriminant < 0.0f || a <= 0.0f )
+		return;
+
+	const float flFraction = ( -b - std::sqrt( flDiscriminant ) ) / a;
+	if ( flFraction < 0.0f || !( flFraction < hit.m_flFraction ) )
+		return;
+
+	const Vector normal = ( start + delta * flFraction - center ) / flRadius;
+	hit = { pObject, ToBox3D( normal ), flFraction };
 }
 
 void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
@@ -694,8 +728,17 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 		const float flLength = wheel.m_flSpringLength + wheel.m_flRadius;
 		directions[i] = direction;
 
+		const Vector rayStart = IVPToSourcePosition( start );
+		const Vector rayEnd = IVPToSourcePosition( start + real_t( flLength ) * ToReal( direction ) );
+		Vector mins, maxs;
+		VectorMin( rayStart, rayEnd, mins );
+		VectorMax( rayStart, rayEnd, maxs );
+		static thread_local std::vector<CPhysicsObject *> s_Candidates;
+		s_Candidates.clear();
+		b3World_OverlapAABB( pEnvironment->GetWorld(), { ToBox3D( mins ), ToBox3D( maxs ) }, b3DefaultQueryFilter(), CollectRayCandidate, &s_Candidates );
 		RayHit_t hit = { nullptr, b3Vec3_zero, 1.0f };
-		b3World_CastRay( pEnvironment->GetWorld(), b3ToPos( ToBox3D( IVPToSourcePosition( start ) ) ), IVPToSource( b3MulSV( flLength, direction ) ), b3DefaultQueryFilter(), CollectNearestHit, &hit );
+		for ( CPhysicsObject *pCandidate : s_Candidates )
+			TraceWheelRay( pCandidate, rayStart, rayEnd, hit );
 
 		hits[i] = hit.m_pObject != nullptr;
 		if ( !hits[i] )

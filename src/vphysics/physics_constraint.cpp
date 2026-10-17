@@ -79,6 +79,24 @@ static void ConvertRagdollAxes( const matrix3x4_t &m, b3Vec3 axes[3] )
 	axes[2] = SourceToIVPAxis( MatrixColumn( m, 1 ) );
 }
 
+static void RotateRagdollAxes( b3Vec3 axes[3], int nAxis, float flAngle )
+{
+	const int nFirst = ( nAxis + 1 ) % 3, nSecond = ( nFirst + 1 ) % 3;
+	const float flSine = std::sin( flAngle ), flCosine = std::cos( flAngle );
+	float rotation[3][3] = {};
+	rotation[nFirst][nFirst] = flCosine;
+	rotation[nSecond][nSecond] = flCosine;
+	rotation[nFirst][nSecond] = flSine;
+	rotation[nSecond][nFirst] = -flSine;
+	rotation[nAxis][nAxis] = 1.0f;
+
+	b3Vec3 rotated[3];
+	for ( int i = 0; i < 3; ++i )
+		rotated[i] = b3Add( b3Add( b3MulSV( rotation[i][0], axes[0] ), b3MulSV( rotation[i][1], axes[1] ) ), b3MulSV( rotation[i][2], axes[2] ) );
+	for ( int i = 0; i < 3; ++i )
+		axes[i] = rotated[i];
+}
+
 static b3Vec3 RotateRows( const RealMatrix3_t &rotation, b3Vec3 v )
 {
 	const auto &m = rotation.m;
@@ -711,12 +729,9 @@ void CPhysicsConstraint::BuildHinge( const constraint_limitedhingeparams_t &hing
 void CPhysicsConstraint::BuildRagdoll( const constraint_ragdollparams_t &ragdoll )
 {
 	m_bOnlyAngularLimits = ragdoll.onlyAngularLimits;
-	m_bUseClockwiseRotations = ragdoll.useClockwiseRotations;
-	for ( int i = 0; i < 3; ++i )
-		m_RagdollAxes[i] = ragdoll.axes[i];
 
 	float lower[3], upper[3], range[3];
-	int nFree = 0;
+	int nFree = 0, nFreeAxis = 0;
 	for ( int i = 0; i < 3; ++i )
 	{
 		const constraint_axislimit_t &axis = ragdoll.axes[IVP_TO_SOURCE_AXIS[i]];
@@ -732,68 +747,91 @@ void CPhysicsConstraint::BuildRagdoll( const constraint_ragdollparams_t &ragdoll
 		upper[i] = flUpper;
 		range[i] = flUpper - flLower;
 		if ( range[i] > MIN_AXIS_RANGE )
+		{
 			++nFree;
+			nFreeAxis = i;
+		}
 	}
 
-	ConvertRagdollAxes( ragdoll.constraintToReference, m_RagdollFrames.m_Axes[0] );
-	ConvertRagdollAxes( ragdoll.constraintToAttached, m_RagdollFrames.m_Axes[1] );
+	b3Vec3 columns[2][3];
+	ConvertRagdollAxes( ragdoll.constraintToReference, columns[0] );
+	ConvertRagdollAxes( ragdoll.constraintToAttached, columns[1] );
 	m_RagdollFrames.m_Origins[0] = SourceToIVP( MatrixColumn( ragdoll.constraintToReference, 3 ) );
 	m_RagdollFrames.m_Origins[1] = SourceToIVP( MatrixColumn( ragdoll.constraintToAttached, 3 ) );
 
 	int nTwist = 0, nCone = 2, nPlane = 1;
-	if ( nFree >= 2 )
+	if ( nFree == 1 )
 	{
-		nTwist = SelectTwistAxis();
+		nCone = nFreeAxis;
+		nTwist = ( nFreeAxis + 1 ) % 3;
+		nPlane = ( nFreeAxis + 2 ) % 3;
+	}
+	else if ( nFree >= 2 )
+	{
+		nTwist = SelectTwistAxis( columns );
 		const int nNext = ( nTwist + 1 ) % 3, nPrevious = ( nTwist + 2 ) % 3;
 		nCone = range[nNext] > range[nPrevious] ? nNext : nPrevious;
 		nPlane = nCone == nNext ? nPrevious : nNext;
-
-		const float flCenter = ( upper[nCone] + lower[nCone] ) * 0.5f;
-		const float flSine = std::sin( flCenter ), flCosine = std::cos( flCenter );
-		b3Vec3 *axes = m_RagdollFrames.m_Axes[0];
-		const b3Vec3 first = axes[( nCone + 1 ) % 3], second = axes[( nCone + 2 ) % 3];
-		axes[( nCone + 1 ) % 3] = b3Add( b3MulSV( flCosine, first ), b3MulSV( flSine, second ) );
-		axes[( nCone + 2 ) % 3] = b3Sub( b3MulSV( flCosine, second ), b3MulSV( flSine, first ) );
 	}
-	m_flConeRange = range[nCone];
-	m_bConeCentered = nFree >= 2;
-	m_RagdollFrames.m_nTwistAxis = nTwist;
-	m_RagdollFrames.m_nConeAxis = nCone;
-	m_RagdollFrames.m_nPlaneAxis = nPlane;
+
+	if ( nFree >= 1 )
+		RotateRagdollAxes( columns[0], nCone, ( upper[nCone] + lower[nCone] ) * 0.5f );
+
+	m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_TWIST] = nTwist;
+	m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_CONE] = nCone;
+	m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_PLANE] = nPlane;
+	for ( int i = 0; i < 2; ++i )
+		StoreRagdollRows( i, columns[i] );
 	UpdateRagdollSolverAxes();
+
+	float ( &limits )[CRagdollSolver::SLOT_COUNT][2] = m_RagdollLimits;
+	limits[CRagdollSolver::SLOT_TWIST][0] = 0.0f;
+	limits[CRagdollSolver::SLOT_TWIST][1] = 0.0f;
+	limits[CRagdollSolver::SLOT_CONE][0] = -LOCKED_CONE_ANGLE;
+	limits[CRagdollSolver::SLOT_CONE][1] = LOCKED_CONE_ANGLE;
+	limits[CRagdollSolver::SLOT_PLANE][0] = 0.0f;
+	limits[CRagdollSolver::SLOT_PLANE][1] = 0.0f;
+	if ( nFree == 1 )
+	{
+		float flConeRange = range[nCone];
+		if ( PI < flConeRange && flConeRange < TWO_PI )
+			flConeRange = PI;
+		limits[CRagdollSolver::SLOT_CONE][0] = flConeRange * -0.5f;
+		limits[CRagdollSolver::SLOT_CONE][1] = flConeRange * 0.5f;
+	}
+	else if ( nFree >= 2 )
+	{
+		limits[CRagdollSolver::SLOT_TWIST][0] = -upper[nTwist];
+		limits[CRagdollSolver::SLOT_TWIST][1] = -lower[nTwist];
+		limits[CRagdollSolver::SLOT_CONE][0] = range[nCone] * -0.5f;
+		limits[CRagdollSolver::SLOT_CONE][1] = range[nCone] * 0.5f;
+		limits[CRagdollSolver::SLOT_PLANE][0] = lower[nPlane];
+		limits[CRagdollSolver::SLOT_PLANE][1] = upper[nPlane];
+	}
+
+	bool limited[CRagdollSolver::SLOT_COUNT];
+	for ( int i = 0; i < CRagdollSolver::SLOT_COUNT; ++i )
+		limited[i] = !IsFullCircle( limits[i][0], limits[i][1] ) && limits[i][1] - limits[i][0] < TWO_PI;
 
 	CRagdollSolver::Limit_t &twist = m_Ragdoll.GetLimit( CRagdollSolver::SLOT_TWIST );
 	CRagdollSolver::Limit_t &cone = m_Ragdoll.GetLimit( CRagdollSolver::SLOT_CONE );
 	CRagdollSolver::Limit_t &plane = m_Ragdoll.GetLimit( CRagdollSolver::SLOT_PLANE );
-	float flConeHalfRange = LOCKED_CONE_ANGLE;
-	if ( nFree >= 2 )
-	{
-		twist.m_flLower = -upper[nTwist];
-		twist.m_flUpper = -lower[nTwist];
-		twist.m_bLimited = !IsFullCircle( twist.m_flLower, twist.m_flUpper ) && range[nTwist] < TWO_PI;
-		flConeHalfRange = range[nCone] * 0.5f;
-		cone.m_bLimited = !IsFullCircle( -flConeHalfRange, flConeHalfRange ) && range[nCone] < TWO_PI;
-		plane.m_flLower = -std::sin( upper[nPlane] );
-		plane.m_flUpper = -std::sin( lower[nPlane] );
-		plane.m_bLimited = !IsFullCircle( lower[nPlane], upper[nPlane] ) && range[nPlane] < TWO_PI;
-	}
-	else
-	{
-		twist.m_bLimited = true;
-		cone.m_bLimited = true;
-		plane.m_flLower = -std::sin( 0.0f );
-		plane.m_flUpper = -std::sin( 0.0f );
-		plane.m_bLimited = true;
-	}
+	twist.m_flLower = limits[CRagdollSolver::SLOT_TWIST][0];
+	twist.m_flUpper = limits[CRagdollSolver::SLOT_TWIST][1];
+	twist.m_bLimited = limited[CRagdollSolver::SLOT_TWIST];
+	const float flConeHalfRange = limits[CRagdollSolver::SLOT_CONE][1];
 	cone.m_flLower = std::cos( flConeHalfRange );
 	cone.m_flUpper = CONE_UPPER_BOUND;
+	cone.m_bLimited = limited[CRagdollSolver::SLOT_CONE];
+	plane.m_flLower = -std::sin( limits[CRagdollSolver::SLOT_PLANE][1] );
+	plane.m_flUpper = -std::sin( limits[CRagdollSolver::SLOT_PLANE][0] );
+	plane.m_bLimited = limited[CRagdollSolver::SLOT_PLANE];
 
 	const float flReferenceMass = m_pReference ? m_pReference->GetMass() : 0.0f;
-	const int slotAxes[CRagdollSolver::SLOT_COUNT] = { nTwist, nCone, nPlane };
 	float flMaxFriction = 0.0f;
 	for ( int i = 0; i < CRagdollSolver::SLOT_COUNT; ++i )
 	{
-		const constraint_axislimit_t &axis = ragdoll.axes[IVP_TO_SOURCE_AXIS[slotAxes[i]]];
+		const constraint_axislimit_t &axis = ragdoll.axes[IVP_TO_SOURCE_AXIS[m_RagdollFrames.m_SlotAxes[i]]];
 		CRagdollSolver::Limit_t &limit = m_Ragdoll.GetLimit( static_cast<CRagdollSolver::Slot_t>( i ) );
 		const float flFriction = flReferenceMass * axis.torque;
 		limit.m_flMaxTorque = std::fabs( flFriction );
@@ -837,7 +875,15 @@ void CPhysicsConstraint::BuildRagdoll( const constraint_ragdollparams_t &ragdoll
 	}
 }
 
-int CPhysicsConstraint::SelectTwistAxis() const
+void CPhysicsConstraint::StoreRagdollRows( int nBody, const b3Vec3 columns[3] )
+{
+	b3Vec3 *rows = m_RagdollFrames.m_Rows[nBody];
+	rows[RagdollFrames_t::ROW_TWIST] = columns[m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_TWIST]];
+	rows[RagdollFrames_t::ROW_PLANE] = columns[m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_PLANE]];
+	rows[RagdollFrames_t::ROW_CONE] = columns[m_RagdollFrames.m_SlotAxes[CRagdollSolver::SLOT_CONE]];
+}
+
+int CPhysicsConstraint::SelectTwistAxis( const b3Vec3 columns[2][3] ) const
 {
 	if ( !m_pReference )
 		return 0;
@@ -859,8 +905,8 @@ int CPhysicsConstraint::SelectTwistAxis() const
 	float flBest = -1.0f;
 	for ( int i = 0; i < 3; ++i )
 	{
-		const b3Vec3 a = ToFloat( Rotate( referenceRotation, m_RagdollFrames.m_Axes[0][i] ) );
-		const b3Vec3 b = ToFloat( Rotate( attachedRotation, m_RagdollFrames.m_Axes[1][i] ) );
+		const b3Vec3 a = ToFloat( Rotate( referenceRotation, columns[0][i] ) );
+		const b3Vec3 b = ToFloat( Rotate( attachedRotation, columns[1][i] ) );
 		float flAngular = 0.0f;
 		if ( m_pReference->IsMoveable() )
 		{
@@ -884,13 +930,13 @@ int CPhysicsConstraint::SelectTwistAxis() const
 void CPhysicsConstraint::UpdateRagdollSolverAxes()
 {
 	for ( int i = 0; i < 2; ++i )
-		m_Ragdoll.SetAxes( i, m_RagdollFrames.m_Axes[i][m_RagdollFrames.m_nTwistAxis], m_RagdollFrames.m_Axes[i][m_RagdollFrames.m_nConeAxis] );
+		m_Ragdoll.SetAxes( i, m_RagdollFrames.m_Rows[i][RagdollFrames_t::ROW_TWIST], m_RagdollFrames.m_Rows[i][RagdollFrames_t::ROW_CONE] );
 }
 
 b3Transform CPhysicsConstraint::GetRagdollFrame( int nBody ) const
 {
-	const b3Vec3 *axes = m_RagdollFrames.m_Axes[nBody];
-	return { IVPToSource( m_RagdollFrames.m_Origins[nBody] ), MakeFrameRotation( IVPToSourceAxis( axes[m_RagdollFrames.m_nConeAxis] ), IVPToSourceAxis( axes[m_RagdollFrames.m_nTwistAxis] ) ) };
+	const b3Vec3 *rows = m_RagdollFrames.m_Rows[nBody];
+	return { IVPToSource( m_RagdollFrames.m_Origins[nBody] ), MakeFrameRotation( IVPToSourceAxis( rows[RagdollFrames_t::ROW_CONE] ), IVPToSourceAxis( rows[RagdollFrames_t::ROW_TWIST] ) ) };
 }
 
 void CPhysicsConstraint::PrepareBodies( ConstraintBody_t bodies[2], float scales[2] ) const
@@ -1205,8 +1251,11 @@ void CPhysicsConstraint::UpdateRagdollTransforms( const matrix3x4_t &constraintT
 	if ( m_nType != CONSTRAINT_RAGDOLL )
 		return;
 
-	ConvertRagdollAxes( constraintToReference, m_RagdollFrames.m_Axes[0] );
-	ConvertRagdollAxes( constraintToAttached, m_RagdollFrames.m_Axes[1] );
+	b3Vec3 columns[2][3];
+	ConvertRagdollAxes( constraintToReference, columns[0] );
+	ConvertRagdollAxes( constraintToAttached, columns[1] );
+	for ( int i = 0; i < 2; ++i )
+		StoreRagdollRows( i, columns[i] );
 	UpdateRagdollSolverAxes();
 	if ( m_nJointType != b3_sphericalJoint )
 		return;
@@ -1250,10 +1299,10 @@ bool CPhysicsConstraint::GetConstraintTransform( matrix3x4_t *pConstraintToRefer
 			matrix3x4_t *pOutput = i == 0 ? pConstraintToReference : pConstraintToAttached;
 			if ( !pOutput )
 				continue;
-			const b3Vec3 *axes = m_RagdollFrames.m_Axes[i];
-			SetMatrixColumn( *pOutput, 0, IVPToSourceAxis( axes[m_RagdollFrames.m_nTwistAxis] ) );
-			SetMatrixColumn( *pOutput, 1, IVPToSourceAxis( axes[m_RagdollFrames.m_nConeAxis] ) );
-			SetMatrixColumn( *pOutput, 2, b3Neg( IVPToSourceAxis( axes[m_RagdollFrames.m_nPlaneAxis] ) ) );
+			const b3Vec3 *rows = m_RagdollFrames.m_Rows[i];
+			SetMatrixColumn( *pOutput, 0, IVPToSourceAxis( rows[RagdollFrames_t::ROW_TWIST] ) );
+			SetMatrixColumn( *pOutput, 1, IVPToSourceAxis( rows[RagdollFrames_t::ROW_CONE] ) );
+			SetMatrixColumn( *pOutput, 2, b3Neg( IVPToSourceAxis( rows[RagdollFrames_t::ROW_PLANE] ) ) );
 			SetMatrixColumn( *pOutput, 3, IVPToSource( m_RagdollFrames.m_Origins[i] ) );
 		}
 		return true;
@@ -1320,11 +1369,6 @@ static matrix3x4_t RoundTripRotation( const matrix3x4_t &matrix )
 			result[i][j] = static_cast<float>( rotation.m[i][j] );
 	}
 	return result;
-}
-
-static float RoundTripAngle( float flDegrees )
-{
-	return ( flDegrees * DEGREES_TO_RADIANS ) * RADIANS_TO_DEGREES;
 }
 
 void CPhysicsConstraint::Save( ISave *pSave ) const
@@ -1432,30 +1476,45 @@ void CPhysicsConstraint::Save( ISave *pSave ) const
 	{
 		vphysics_save_constraintragdoll_t record = {};
 		record.constraint = breakable;
+		const int *slotAxes = m_RagdollFrames.m_SlotAxes;
 		matrix3x4_t *const matrices[2] = { &record.constraintToReference, &record.constraintToAttached };
 		for ( int i = 0; i < 2; ++i )
 		{
-			const b3Vec3 *axes = m_RagdollFrames.m_Axes[i];
-			SetMatrixColumn( *matrices[i], 0, IVPToSourceAxis( axes[0] ) );
-			SetMatrixColumn( *matrices[i], 1, IVPToSourceAxis( axes[2] ) );
-			SetMatrixColumn( *matrices[i], 2, b3Neg( IVPToSourceAxis( axes[1] ) ) );
+			const b3Vec3 *rows = m_RagdollFrames.m_Rows[i];
+			b3Vec3 columns[3];
+			columns[slotAxes[CRagdollSolver::SLOT_TWIST]] = rows[RagdollFrames_t::ROW_TWIST];
+			columns[slotAxes[CRagdollSolver::SLOT_PLANE]] = rows[RagdollFrames_t::ROW_PLANE];
+			columns[slotAxes[CRagdollSolver::SLOT_CONE]] = rows[RagdollFrames_t::ROW_CONE];
+			SetMatrixColumn( *matrices[i], 0, IVPToSourceAxis( columns[0] ) );
+			SetMatrixColumn( *matrices[i], 1, IVPToSourceAxis( columns[2] ) );
+			SetMatrixColumn( *matrices[i], 2, b3Neg( IVPToSourceAxis( columns[1] ) ) );
 			SetMatrixColumn( *matrices[i], 3, IVPToSource( m_RagdollFrames.m_Origins[i] ) );
 		}
+
+		const float flInverseMass = m_pReference->GetInvMass();
 		for ( int i = 0; i < 3; ++i )
 		{
-			record.axes[i] = m_RagdollAxes[i];
-			record.axes[i].minRotation = RoundTripAngle( m_RagdollAxes[i].minRotation );
-			record.axes[i].maxRotation = RoundTripAngle( m_RagdollAxes[i].maxRotation );
-		}
-		if ( m_bConeCentered )
-		{
-			constraint_axislimit_t &cone = record.axes[IVP_TO_SOURCE_AXIS[m_RagdollFrames.m_nConeAxis]];
-			cone.minRotation = ( m_flConeRange * -0.5f ) * RADIANS_TO_DEGREES;
-			cone.maxRotation = ( m_flConeRange * 0.5f ) * RADIANS_TO_DEGREES;
+			int nSlot = 0;
+			while ( slotAxes[nSlot] != IVP_TO_SOURCE_AXIS[i] )
+				++nSlot;
+
+			const CRagdollSolver::Limit_t &limit = m_Ragdoll.GetLimit( static_cast<CRagdollSolver::Slot_t>( nSlot ) );
+			float flLower = m_RagdollLimits[nSlot][0], flUpper = m_RagdollLimits[nSlot][1];
+			if ( nSlot == CRagdollSolver::SLOT_TWIST )
+			{
+				flLower = -m_RagdollLimits[nSlot][1];
+				flUpper = -m_RagdollLimits[nSlot][0];
+			}
+
+			constraint_axislimit_t &axis = record.axes[i];
+			axis.minRotation = i == 2 ? flUpper * -RADIANS_TO_DEGREES : flLower * RADIANS_TO_DEGREES;
+			axis.maxRotation = i == 2 ? flLower * -RADIANS_TO_DEGREES : flUpper * RADIANS_TO_DEGREES;
+			axis.angularVelocity = limit.m_flTargetSpeed * RADIANS_TO_DEGREES;
+			axis.torque = flInverseMass * limit.m_flMaxTorque;
 		}
 		record.onlyAngularLimits = m_bOnlyAngularLimits;
 		record.isActive = m_pPrivateGroup ? m_pPrivateGroup->IsActive() : true;
-		record.useClockwiseRotations = m_bUseClockwiseRotations;
+		record.useClockwiseRotations = false;
 		pSave->WriteAll( &record );
 		break;
 	}

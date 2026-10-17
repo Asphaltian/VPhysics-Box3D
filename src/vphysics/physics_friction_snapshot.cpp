@@ -3,32 +3,61 @@
 #include "physics_environment.h"
 #include "physics_object.h"
 
-CPhysicsFrictionSnapshot::CPhysicsFrictionSnapshot( CPhysicsObject *pObject, std::vector<Contact_t> contacts )
+CPhysicsFrictionSnapshot::CPhysicsFrictionSnapshot( CPhysicsObject *pObject )
 : m_pObject( pObject )
-, m_Contacts( std::move( contacts ) )
+, m_pCurrent( pObject->GetFrictionHead() )
 {
+}
+
+int CPhysicsFrictionSnapshot::GetSide() const
+{
+	return m_pCurrent->m_pObjects[0] == m_pObject ? 0 : 1;
 }
 
 IPhysicsObject *CPhysicsFrictionSnapshot::GetObject( int index )
 {
-	return index == 1 ? m_Contacts[m_nCurrent].m_pOther : m_pObject;
+	return index == 1 ? m_pCurrent->m_pObjects[1 - GetSide()] : m_pObject;
 }
 
 int CPhysicsFrictionSnapshot::GetMaterial( int index )
 {
-	return m_Contacts[m_nCurrent].m_Materials[index & 1];
+	return m_pCurrent->m_Materials[( index & 1 ) ^ GetSide()];
 }
 
-void CPhysicsFrictionSnapshot::RecomputeFriction()
+void CPhysicsFrictionSnapshot::GetContactPoint( Vector &out )
 {
-	Contact_t &contact = m_Contacts[m_nCurrent];
-	m_pObject->GetEnvironment()->RefreshFrictionContact( m_pObject, contact.m_nKey, contact.m_Point, contact.m_Normal );
+	out = m_pCurrent->m_Point;
+}
+
+void CPhysicsFrictionSnapshot::GetSurfaceNormal( Vector &out )
+{
+	out = m_pObject->GetEnvironment()->GetFrictionNormal( *m_pCurrent, m_pObject );
+}
+
+float CPhysicsFrictionSnapshot::GetNormalForce()
+{
+	return m_pCurrent->m_flNormalImpulse * m_pObject->GetEnvironment()->GetInverseTimestep();
+}
+
+float CPhysicsFrictionSnapshot::GetEnergyAbsorbed()
+{
+	return m_pCurrent->m_flEnergy;
+}
+
+float CPhysicsFrictionSnapshot::GetFrictionCoefficient()
+{
+	return m_pCurrent->m_flFriction;
+}
+
+void CPhysicsFrictionSnapshot::NextFrictionData()
+{
+	m_pCurrent = m_pCurrent->GetNext( m_pObject );
 }
 
 void CPhysicsFrictionSnapshot::MarkContactForDelete()
 {
 	m_bHasMarkedList = true;
-	CPhysicsObject *pOther = m_Contacts[m_nCurrent].m_pOther;
+	CPhysicsObject *pOther = m_pCurrent->m_pObjects[1 - GetSide()];
 	if ( pOther != m_pObject )
 		m_MarkedPartners.push_back( pOther );
 }
@@ -45,5 +74,5 @@ void CPhysicsFrictionSnapshot::DeleteAllMarkedContacts( bool wakeObjects )
 		m_pObject->GetEnvironment()->RemoveContacts( m_pObject, pPartner );
 	}
 
-	m_nCurrent = m_Contacts.size();
+	m_pCurrent = nullptr;
 }

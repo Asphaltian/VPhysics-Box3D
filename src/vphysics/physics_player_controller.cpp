@@ -60,11 +60,11 @@ void CPhysicsPlayerController::AttachToObject()
 
 void CPhysicsPlayerController::Update( const Vector &position, const Vector &velocity, float secondsToArrival, bool, IPhysicsObject *ground )
 {
-	const RealVec3_t target = ToReal( SourceToIVP( position ) );
+	const DoubleVec3_t target = ToDouble( SourceToIVP( position ) );
 	const b3Vec3 targetVelocity = SourceToIVP( velocity );
 	m_bUpdated = true;
 
-	if ( double( b3LengthSquared( b3Sub( targetVelocity, m_TargetVelocity ) ) ) < MIN_TARGET_CHANGE && double( LengthSquared( target - m_TargetPosition ) ) < MIN_TARGET_CHANGE )
+	if ( b3LengthSquared( b3Sub( targetVelocity, m_TargetVelocity ) ) < MIN_TARGET_CHANGE && LengthSquared( target - m_TargetPosition ) < MIN_TARGET_CHANGE )
 		return;
 
 	m_TargetPosition = target;
@@ -187,11 +187,11 @@ void CPhysicsPlayerController::Simulate( CPhysicsObject *pObject, float flTimest
 		}
 	}
 
-	const RealVec3_t gravity = pObject->GetEnvironment()->GetIVPGravity();
+	const DoubleVec3_t gravity = pObject->GetEnvironment()->GetIVPGravity();
 	const b3Vec3 gravityStep = {
-		static_cast<float>( real_t( flTimestep ) * gravity.x ),
-		static_cast<float>( real_t( flTimestep ) * gravity.y ),
-		static_cast<float>( real_t( flTimestep ) * gravity.z ),
+		static_cast<float>( static_cast<double>( flTimestep ) * gravity.x ),
+		static_cast<float>( static_cast<double>( flTimestep ) * gravity.y ),
+		static_cast<float>( static_cast<double>( flTimestep ) * gravity.z ),
 	};
 
 	float flFraction = 1.0f;

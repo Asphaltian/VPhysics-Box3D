@@ -9,7 +9,7 @@
 static constexpr float SHADOW_ROT_DAMPING = 100.0f;
 static constexpr float LOCKED_INERTIA = 1e15f;
 static constexpr float LOCKED_MASS = 50000.0f;
-static constexpr real_t MIN_POSITION_CHANGE = 1e-8;
+static constexpr double MIN_POSITION_CHANGE = 1e-8;
 static constexpr float MIN_ROTATION_CHANGE = 1e-8f;
 
 CPhysicsShadowController::CPhysicsShadowController( CPhysicsObject *pObject, bool allowTranslation, bool allowRotation )
@@ -30,7 +30,7 @@ CPhysicsShadowController::CPhysicsShadowController( CPhysicsObject *pObject, boo
 	Vector position;
 	QAngle angles;
 	pObject->GetPosition( &position, &angles );
-	m_Control.m_TargetPosition = ToReal( SourceToIVP( position ) );
+	m_Control.m_TargetPosition = ToDouble( SourceToIVP( position ) );
 	m_Control.m_TargetRotation = AnglesToIVP( angles );
 
 	UseShadowMaterial( true );
@@ -65,7 +65,7 @@ CPhysicsShadowController::CPhysicsShadowController( CPhysicsObject *pObject, con
 , m_bPhysicallyControlled( record.isPhysicallyControlled )
 {
 	const vphysics_save_shadowcontrolparams_t &params = record.shadowParams;
-	m_Control.m_TargetPosition = ToReal( SourceToIVP( params.targetPosition ) );
+	m_Control.m_TargetPosition = ToDouble( SourceToIVP( params.targetPosition ) );
 	m_Control.m_TargetRotation = AnglesToIVP( params.targetRotation );
 	m_Control.m_flMaxSpeed = params.maxSpeed * SOURCE_TO_IVP;
 	m_Control.m_flMaxDampSpeed = params.maxDampSpeed * SOURCE_TO_IVP;
@@ -128,10 +128,10 @@ CPhysicsShadowController::~CPhysicsShadowController()
 
 void CPhysicsShadowController::Update( const Vector &position, const QAngle &angles, float timeOffset )
 {
-	const RealVec3_t targetPosition = ToReal( SourceToIVP( position ) );
-	const RealQuat_t targetRotation = AnglesToIVP( angles );
-	const RealVec3_t positionChange = m_Control.m_TargetPosition - targetPosition;
-	const RealQuat_t &q0 = m_Control.m_TargetRotation;
+	const DoubleVec3_t targetPosition = ToDouble( SourceToIVP( position ) );
+	const DoubleQuat_t targetRotation = AnglesToIVP( angles );
+	const DoubleVec3_t positionChange = m_Control.m_TargetPosition - targetPosition;
+	const DoubleQuat_t &q0 = m_Control.m_TargetRotation;
 	const float flRotationChange = static_cast<float>( std::fabs( q0.x - targetRotation.x ) + std::fabs( q0.y - targetRotation.y ) + std::fabs( q0.z - targetRotation.z ) + std::fabs( q0.w - targetRotation.w ) );
 	const bool bChanged = !( LengthSquared( positionChange ) < MIN_POSITION_CHANGE && flRotationChange < MIN_ROTATION_CHANGE );
 
@@ -217,7 +217,7 @@ void CPhysicsShadowController::Simulate( CPhysicsObject *pObject, float flTimest
 
 	if ( m_bAllowTranslation )
 	{
-		const float flGravity = static_cast<float>( real_t( flTimestep ) * pObject->GetEnvironment()->GetIVPGravity().y );
+		const float flGravity = static_cast<float>( static_cast<double>( flTimestep ) * pObject->GetEnvironment()->GetIVPGravity().y );
 		if ( flGravity < m_Control.m_LastImpulse.y )
 		{
 			for ( const CPhysicsEnvironment::ContactNormal_t &contact : pObject->GetEnvironment()->GetContactNormals( pObject ) )

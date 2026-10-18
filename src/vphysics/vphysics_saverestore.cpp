@@ -20,7 +20,7 @@
 #include <unordered_map>
 
 static constexpr int MAX_MATERIAL_NAME = 1024;
-static constexpr unsigned int OBJECT_RECORD_SIZE = 0xa0;
+static constexpr unsigned int OBJECT_RECORD_SIZE = sizeof( void * ) == 8 ? 0xa0 : 0x94;
 
 static_assert( sizeof( vphysics_save_cphysicsobject_t ) == OBJECT_RECORD_SIZE );
 

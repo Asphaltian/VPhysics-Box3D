@@ -1,7 +1,7 @@
 #include "physics_trace.h"
 
 #include "compact_builder/compact_surface.h"
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 #include "conversion.h"
 #include "physics_collide.h"
 
@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -767,7 +766,7 @@ public:
 
 	b3Vec3 RotateToLocal( b3Vec3 floatDirection ) const
 	{
-		const RealVec3_t direction = ToReal( floatDirection );
+		const DoubleVec3_t direction = ToDouble( floatDirection );
 		return ToFloat( {
 			( direction.x * m_Rotation[0].x + direction.y * m_Rotation[1].x ) + direction.z * m_Rotation[2].x,
 			( direction.x * m_Rotation[0].y + direction.y * m_Rotation[1].y ) + direction.z * m_Rotation[2].y,
@@ -983,7 +982,7 @@ private:
 	const CPhysCollideCompactSurface &m_Collide;
 	bool m_bHasOrigin;
 	VisitedPoints_t *m_pVisited;
-	RealVec3_t m_Rotation[3];
+	DoubleVec3_t m_Rotation[3];
 	float m_World[3][4];
 	const unsigned char *m_pLedge = nullptr;
 	const unsigned char *m_pPoints = nullptr;
@@ -1027,9 +1026,9 @@ public:
 
 	SupportPoint_t Support( b3Vec3 direction ) const
 	{
-		const int nX = static_cast<int>( std::bit_cast<uint32_t>( direction.x ) >> 31 );
-		const int nY = static_cast<int>( std::bit_cast<uint32_t>( direction.y ) >> 31 );
-		const int nZ = static_cast<int>( std::bit_cast<uint32_t>( direction.z ) >> 31 );
+		const int nX = static_cast<int>( BitCast<uint32_t>( direction.x ) >> 31 );
+		const int nY = static_cast<int>( BitCast<uint32_t>( direction.y ) >> 31 );
+		const int nZ = static_cast<int>( BitCast<uint32_t>( direction.z ) >> 31 );
 		return { { m_Extents[0][nX], m_Extents[1][nY], m_Extents[2][nZ] }, ( nZ * 2 | nY ) * 2 | nX };
 	}
 
@@ -1085,13 +1084,9 @@ public:
 	{
 		m_Direction = m_Delta;
 		const float flLengthSquared = b3LengthSquared( m_Delta );
-		if ( !( flLengthSquared < REAL_RESOLUTION ) )
+		if ( !( flLengthSquared < DOUBLE_RESOLUTION ) )
 		{
-#if defined( VPHYSICS_GMOD )
-			m_Direction = ToFloat( ApproximateInverseSquareRoot( flLengthSquared, 4 ) * ToReal( m_Delta ) );
-#else
-			m_Direction = b3MulSV( 1.0f / std::sqrt( flLengthSquared ), m_Delta );
-#endif
+			m_Direction = ToFloat( ApproximateInverseSquareRoot( flLengthSquared, 4 ) * ToDouble( m_Delta ) );
 		}
 		m_Midpoint = b3MulAdd( m_Start, 0.5f, m_Delta );
 	}
@@ -1113,7 +1108,7 @@ public:
 
 	float GetStartDistanceSquared( const CPhysCollideCompactSurface::LedgeTreeNode_t &node ) const
 	{
-		return static_cast<float>( LengthSquared( ToReal( b3Sub( m_Start, node.m_Center ) ) ) );
+		return static_cast<float>( LengthSquared( ToDouble( b3Sub( m_Start, node.m_Center ) ) ) );
 	}
 
 private:

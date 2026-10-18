@@ -11,9 +11,7 @@
 
 static constexpr float MIN_SPRING_LENGTH = 1e-10f;
 static constexpr float MIN_LENGTH_CHANGE = SOURCE_TO_IVP * 0.001f;
-#if defined( VPHYSICS_GMOD )
 static constexpr int INVERSE_LENGTH_REFINEMENTS = 5;
-#endif
 
 CPhysicsSpring::CPhysicsSpring( CPhysicsEnvironment *pEnvironment, CPhysicsObject *pStart, CPhysicsObject *pEnd, const springparams_t &params )
 : m_pEnvironment( pEnvironment )
@@ -33,10 +31,10 @@ CPhysicsSpring::CPhysicsSpring( CPhysicsEnvironment *pEnvironment, CPhysicsObjec
 		if ( !params.useLocalPositions )
 			objects[i]->WorldToLocal( &local, *positions[i] );
 
-		RealMatrix3_t rotation;
-		RealVec3_t origin;
+		DoubleMatrix3_t rotation;
+		DoubleVec3_t origin;
 		objects[i]->GetPose( pEnvironment->GetCurrentTime(), rotation, origin );
-		const RealVec3_t world = Rotate( rotation, SourceToIVP( local ) ) + origin;
+		const DoubleVec3_t world = Rotate( rotation, SourceToIVP( local ) ) + origin;
 		m_ObjectAnchors[i] = ToFloat( InverseRotate( rotation, world - origin ) );
 		m_CoreAnchors[i] = b3Add( m_ObjectAnchors[i], objects[i]->GetShift() );
 	}
@@ -160,27 +158,18 @@ void CPhysicsSpring::Simulate( CPhysicsObject *, float flTimestep )
 		return;
 
 	m_nSimulatedStep = m_pEnvironment->GetStepCount();
-	const RealVec3_t start = m_pStart->TransformCorePoint( m_CoreAnchors[0] );
-	const RealVec3_t end = m_pEnd->TransformCorePoint( m_CoreAnchors[1] );
+	const DoubleVec3_t start = m_pStart->TransformCorePoint( m_CoreAnchors[0] );
+	const DoubleVec3_t end = m_pEnd->TransformCorePoint( m_CoreAnchors[1] );
 	const b3Vec3 delta = ToFloat( start - end );
 	b3Vec3 direction = delta;
 	float flLength = 0.0f;
-#if defined( VPHYSICS_GMOD )
 	const double flLengthSquared = ( delta.x * delta.x + delta.y * delta.y ) + delta.z * delta.z;
-	if ( !( flLengthSquared < REAL_RESOLUTION ) )
+	if ( !( flLengthSquared < DOUBLE_RESOLUTION ) )
 	{
 		const double flInverse = ApproximateInverseSquareRoot( flLengthSquared, INVERSE_LENGTH_REFINEMENTS );
 		direction = Scale( delta, flInverse );
 		flLength = static_cast<float>( flInverse * flLengthSquared );
 	}
-#else
-	const float flLengthSquared = ( delta.x * delta.x + delta.y * delta.y ) + delta.z * delta.z;
-	if ( flLengthSquared >= REAL_RESOLUTION )
-	{
-		flLength = std::sqrt( flLengthSquared );
-		direction = b3MulSV( 1.0f / flLength, delta );
-	}
-#endif
 
 	if ( flLength < MIN_SPRING_LENGTH || ( m_bOnlyStretch && !( flLength > m_flLength ) ) )
 		return;
@@ -188,15 +177,9 @@ void CPhysicsSpring::Simulate( CPhysicsObject *, float flTimestep )
 	const b3Vec3 relative = b3Sub( GetAnchorVelocity( m_pEnd, 1 ), GetAnchorVelocity( m_pStart, 0 ) );
 	const float flTension = ( flLength - m_flLength ) * m_flConstant;
 	const float flApproach = ( relative.x * direction.x + relative.y * direction.y ) + relative.z * direction.z;
-#if defined( VPHYSICS_GMOD )
 	const double flAxial = ( static_cast<double>( flTension ) - static_cast<double>( flApproach ) * static_cast<double>( m_flDamping ) ) * static_cast<double>( flTimestep );
 	const double flRelative = static_cast<double>( m_flRelativeDamping ) * static_cast<double>( -flTimestep );
 	const auto component = [&]( float flDirection, float flVelocity ) { return static_cast<float>( static_cast<double>( static_cast<float>( static_cast<double>( flDirection ) * flAxial ) ) + static_cast<double>( flVelocity ) * flRelative ); };
-#else
-	const float flAxial = ( flTension - flApproach * m_flDamping ) * flTimestep;
-	const float flRelative = -( flTimestep * m_flRelativeDamping );
-	const auto component = [&]( float flDirection, float flVelocity ) { return flVelocity * flRelative + flDirection * flAxial; };
-#endif
 	const b3Vec3 impulse = { component( direction.x, relative.x ), component( direction.y, relative.y ), component( direction.z, relative.z ) };
 
 	if ( m_pEnd->IsMoveable() && !m_pEnd->IsAsleep() )

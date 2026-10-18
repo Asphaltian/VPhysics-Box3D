@@ -7,7 +7,7 @@
 #include "vphysics/player_controller.h"
 #include "tier0/valve_minmax_off.h"
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 
 #include <vector>
 
@@ -68,7 +68,7 @@ private:
 	float m_flSecondsToArrival = 0.0f;
 	float m_flPushMassLimit = 50000.0f;
 	float m_flPushSpeedLimit = 10000.0f;
-	RealVec3_t m_TargetPosition = {};
+	DoubleVec3_t m_TargetPosition = {};
 	b3Vec3 m_GroundPosition = b3Vec3_zero;
 	b3Vec3 m_MaxSpeed = b3Vec3_zero;
 	b3Vec3 m_TargetVelocity = b3Vec3_zero;

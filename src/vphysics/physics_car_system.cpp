@@ -24,7 +24,7 @@ static constexpr float SUSPENSION_TOP_OFFSET = 500.0f;
 static constexpr float AIRBORNE_BODY_FORCE_SCALE = 0.1f;
 static constexpr float BODY_MOTOR_MAX_ROTATION_SPEED = 314.15927f;
 static constexpr float LATERAL_FORCE_LEVER = 2.0f;
-static constexpr real_t FAR_ANCHOR_DISTANCE = 1e8f;
+static constexpr double FAR_ANCHOR_DISTANCE = 1e8f;
 static constexpr float ACKERMANN_MIN_ANGLE = 0.001f;
 static constexpr float CENTER_WHEEL_STEERING_SCALE = 0.5f;
 static constexpr float FIXED_WHEEL_SPIN_TRANSFER = 0.25f;
@@ -92,7 +92,7 @@ static b3Vec3 Tangential( b3Vec3 v, b3Vec3 normal )
 	return b3MulSub( v, b3Dot( v, normal ), normal );
 }
 
-static b3Vec3 GetPointVelocity( const CPhysicsObject *pObject, RealVec3_t worldPosition )
+static b3Vec3 GetPointVelocity( const CPhysicsObject *pObject, DoubleVec3_t worldPosition )
 {
 	return b3Add( pObject->GetCoreVelocity(), b3Cross( pObject->CoreToIVP( pObject->GetCoreAngularVelocity() ), ToFloat( worldPosition - pObject->GetCorePosition() ) ) );
 }
@@ -199,8 +199,8 @@ void CSuspensionActuator::Simulate( CPhysicsObject *, float flTimestep )
 		return;
 
 	m_nSimulatedStep = pEnvironment->GetStepCount();
-	const RealVec3_t top = m_pBody->TransformCorePoint( m_BodyAnchor );
-	const RealVec3_t center = m_pWheel->TransformCorePoint( m_WheelAnchor );
+	const DoubleVec3_t top = m_pBody->TransformCorePoint( m_BodyAnchor );
+	const DoubleVec3_t center = m_pWheel->TransformCorePoint( m_WheelAnchor );
 	b3Vec3 direction = ToFloat( top - center );
 	const float flLength = NormalizeLength( direction );
 	if ( flLength < MIN_LENGTH )
@@ -209,18 +209,18 @@ void CSuspensionActuator::Simulate( CPhysicsObject *, float flTimestep )
 	const b3Vec3 relative = b3Sub( GetAnchorVelocity( m_pWheel, m_WheelAnchor ), GetAnchorVelocity( m_pBody, m_BodyAnchor ) );
 	const float flApproach = ( relative.y * direction.y + relative.x * direction.x ) + relative.z * direction.z;
 	const float flDamping = flApproach >= 0.0f ? m_flCompressionDamping : m_flReboundDamping;
-	const real_t flForce = ( real_t( flLength ) - m_flLength ) * m_flConstant - real_t( flDamping ) * flApproach;
-	const real_t flReaction = -flForce;
-	const real_t flMaxBodyForce = m_flMaxBodyForce;
-	real_t flBodyForce = !( flReaction >= -flMaxBodyForce ) ? -flMaxBodyForce : std::min( flMaxBodyForce, flReaction );
+	const double flForce = ( static_cast<double>( flLength ) - m_flLength ) * m_flConstant - static_cast<double>( flDamping ) * flApproach;
+	const double flReaction = -flForce;
+	const double flMaxBodyForce = m_flMaxBodyForce;
+	double flBodyForce = !( flReaction >= -flMaxBodyForce ) ? -flMaxBodyForce : std::min( flMaxBodyForce, flReaction );
 
 	if ( m_pWheel->IsMoveable() )
-		m_pWheel->ApplyImpulse( center, Scale( direction, real_t( flTimestep ) * flForce ) );
+		m_pWheel->ApplyImpulse( center, Scale( direction, static_cast<double>( flTimestep ) * flForce ) );
 
 	if ( !pEnvironment->HasFrictionContact( m_pWheel ) )
 		flBodyForce *= AIRBORNE_BODY_FORCE_SCALE;
 	if ( m_pBody->IsMoveable() )
-		m_pBody->ApplyImpulse( top, Scale( direction, real_t( flTimestep ) * flBodyForce ) );
+		m_pBody->ApplyImpulse( top, Scale( direction, static_cast<double>( flTimestep ) * flBodyForce ) );
 }
 
 void CSuspensionActuator::ObjectDestroyed( CPhysicsObject * )
@@ -286,7 +286,7 @@ CForceActuator::CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, b3Vec3 t
 	pObject->AttachController( this );
 }
 
-CForceActuator::CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, RealVec3_t worldTarget, float flForce )
+CForceActuator::CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, DoubleVec3_t worldTarget, float flForce )
 : m_pObject( pObject )
 , m_Anchor( anchor )
 , m_WorldTarget( worldTarget )
@@ -310,12 +310,12 @@ void CForceActuator::SetForce( float flForce )
 	m_pObject->Wake();
 }
 
-RealVec3_t CForceActuator::GetAnchorPosition() const
+DoubleVec3_t CForceActuator::GetAnchorPosition() const
 {
 	return m_pObject->TransformCorePoint( m_Anchor );
 }
 
-RealVec3_t CForceActuator::GetTargetPosition() const
+DoubleVec3_t CForceActuator::GetTargetPosition() const
 {
 	return m_bWorldTarget ? m_WorldTarget : m_pObject->TransformCorePoint( m_TargetAnchor );
 }
@@ -325,7 +325,7 @@ void CForceActuator::Simulate( CPhysicsObject *, float flTimestep )
 	if ( m_flForce == 0.0f )
 		return;
 
-	const RealVec3_t anchor = GetAnchorPosition();
+	const DoubleVec3_t anchor = GetAnchorPosition();
 	b3Vec3 direction = ToFloat( anchor - GetTargetPosition() );
 	NormalizeLength( direction );
 	if ( m_pObject->IsMoveable() )
@@ -379,7 +379,7 @@ CCarWheelsSystem::CCarWheelsSystem( const CarSystemTemplate_t &carTemplate )
 
 	m_pBodyMotor = new CTorqueActuator( m_pBody, BODY_MOTOR_MAX_ROTATION_SPEED );
 
-	const RealVec3_t farAnchor = { 0.0f, m_pBody->GetEnvironment()->GetIVPGravity().y > 0 ? -FAR_ANCHOR_DISTANCE : FAR_ANCHOR_DISTANCE, 0.0f };
+	const DoubleVec3_t farAnchor = { 0.0f, m_pBody->GetEnvironment()->GetIVPGravity().y > 0 ? -FAR_ANCHOR_DISTANCE : FAR_ANCHOR_DISTANCE, 0.0f };
 	m_pDownforce = new CForceActuator( m_pBody, { 0.0f, carTemplate.m_flDownforceHeight, 0.0f }, farAnchor, 0.0f );
 	new CForceActuator( m_pBody, b3Vec3_zero, farAnchor, carTemplate.m_flExtraGravityForce );
 	m_pFrontLateral = new CForceActuator( m_pBody, { -1.0f, 0.0f, LATERAL_FORCE_LEVER }, b3Vec3{ 1.0f, 0.0f, LATERAL_FORCE_LEVER }, 0.0f );
@@ -431,7 +431,7 @@ void CCarWheelsSystem::DoSteering( float flAngle, bool )
 	}
 
 	b3Vec3 pending = m_pBody->GetPendingAngularVelocity();
-	pending.y = static_cast<float>( real_t( pending.y ) - ( real_t( GetBodySpeed() ) * ( flAngle - m_flSteeringAngle ) ) / flWheelbase );
+	pending.y = static_cast<float>( static_cast<double>( pending.y ) - ( static_cast<double>( GetBodySpeed() ) * ( flAngle - m_flSteeringAngle ) ) / flWheelbase );
 	m_pBody->SetPendingAngularVelocity( pending );
 	m_flSteeringAngle = flAngle;
 	m_pBody->Wake();
@@ -442,7 +442,7 @@ void CCarWheelsSystem::DoSteering( float flAngle, bool )
 		float flWheelAngle = flAngle;
 		if ( ( i & 1 ) != static_cast<int>( flAngle > 0.0f ) && m_nWheels > 3 && std::fabs( flAngle ) >= ACKERMANN_MIN_ANGLE )
 		{
-			const real_t flTangent = std::tan( real_t( std::fabs( flAngle ) ) );
+			const double flTangent = std::tan( static_cast<double>( std::fabs( flAngle ) ) );
 			flWheelAngle = static_cast<float>( std::atan( ( flTangent * flWheelbase ) / ( flTangent * flTrackWidth + flWheelbase ) ) );
 			if ( flAngle < 0.0f )
 				flWheelAngle = -flWheelAngle;
@@ -522,8 +522,8 @@ void CCarWheelsSystem::SetBoosterForce( float flForce )
 	}
 
 	m_pBoosterThrust = new CForceActuator( m_pBody, { 0.0f, 0.0f, 1.0f }, b3Vec3{ 0.0f, 0.0f, -1.0f }, flForce * flMass );
-	const float flAntiGravity = static_cast<float>( -real_t( flMass ) * m_pBody->GetEnvironment()->GetIVPGravity().y );
-	m_pBoosterAntiGravity = new CForceActuator( m_pBody, b3Vec3_zero, RealVec3_t{ 0.0f, -FAR_ANCHOR_DISTANCE, 0.0f }, flAntiGravity );
+	const float flAntiGravity = static_cast<float>( -static_cast<double>( flMass ) * m_pBody->GetEnvironment()->GetIVPGravity().y );
+	m_pBoosterAntiGravity = new CForceActuator( m_pBody, b3Vec3_zero, DoubleVec3_t{ 0.0f, -FAR_ANCHOR_DISTANCE, 0.0f }, flAntiGravity );
 }
 
 void CCarWheelsSystem::ActivateBooster( float flForce, float flDuration, float flDelay )
@@ -564,7 +564,7 @@ CCarRaycastSystem::CCarRaycastSystem( const CarSystemTemplate_t &carTemplate )
 , m_nWheelsPerAxle( carTemplate.m_nWheels / carTemplate.m_nAxles )
 , m_flExtraGravityForce( carTemplate.m_flExtraGravityForce )
 {
-	const RealVec3_t gravity = m_pBody->GetEnvironment()->GetIVPGravity();
+	const DoubleVec3_t gravity = m_pBody->GetEnvironment()->GetIVPGravity();
 	const float flGravitySign = gravity.y > 0 ? 1.0f : -1.0f;
 	m_GravityDirection = ToFloat( gravity );
 	NormalizeLength( m_GravityDirection );
@@ -706,10 +706,10 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 {
 	CPhysicsEnvironment *pEnvironment = m_pBody->GetEnvironment();
 	const float flInverseTimestep = pEnvironment->GetInverseTimestep();
-	const RealMatrix3_t &rotation = m_pBody->GetCoreRotation();
-	const RealVec3_t position = m_pBody->GetCorePosition();
+	const DoubleMatrix3_t &rotation = m_pBody->GetCoreRotation();
+	const DoubleVec3_t position = m_pBody->GetCorePosition();
 
-	RealVec3_t contacts[VEHICLE_MAX_WHEEL_COUNT];
+	DoubleVec3_t contacts[VEHICLE_MAX_WHEEL_COUNT];
 	b3Vec3 directions[VEHICLE_MAX_WHEEL_COUNT];
 	b3Vec3 normals[VEHICLE_MAX_WHEEL_COUNT];
 	b3Vec3 contactVelocities[VEHICLE_MAX_WHEEL_COUNT];
@@ -723,13 +723,13 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 	for ( int i = 0; i < m_nWheels; ++i )
 	{
 		Wheel_t &wheel = m_Wheels[i];
-		const RealVec3_t start = m_pBody->TransformCorePoint( wheel.m_HardPoint );
+		const DoubleVec3_t start = m_pBody->TransformCorePoint( wheel.m_HardPoint );
 		const b3Vec3 direction = ToFloat( Rotate( rotation, wheel.m_SpringDirection ) );
 		const float flLength = wheel.m_flSpringLength + wheel.m_flRadius;
 		directions[i] = direction;
 
 		const Vector rayStart = IVPToSourcePosition( start );
-		const Vector rayEnd = IVPToSourcePosition( start + real_t( flLength ) * ToReal( direction ) );
+		const Vector rayEnd = IVPToSourcePosition( start + static_cast<double>( flLength ) * ToDouble( direction ) );
 		Vector mins, maxs;
 		VectorMin( rayStart, rayEnd, mins );
 		VectorMax( rayStart, rayEnd, maxs );
@@ -754,8 +754,8 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 			b3Vec3 normal = SourceToIVPDirection( hit.m_Normal );
 			if ( !hit.m_pObject->GetCollide() )
 			{
-				RealMatrix3_t hitRotation;
-				RealVec3_t hitOrigin;
+				DoubleMatrix3_t hitRotation;
+				DoubleVec3_t hitOrigin;
 				hit.m_pObject->GetPose( pEnvironment->GetCurrentTime(), hitRotation, hitOrigin );
 				normal = ToFloat( Rotate( hitRotation, normal ) );
 			}
@@ -765,7 +765,7 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 			frictions[i] = GetSurfaceFriction( hit.m_pObject->GetMaterialIndex() );
 		}
 
-		contacts[i] = start + real_t( wheel.m_flHitDistance ) * ToReal( direction );
+		contacts[i] = start + static_cast<double>( wheel.m_flHitDistance ) * ToDouble( direction );
 		contactVelocities[i] = GetPointVelocity( m_pBody, contacts[i] );
 		tangentVelocities[i] = Tangential( contactVelocities[i], normals[i] );
 		worldAxles[i] = ToFloat( Rotate( rotation, wheel.m_Axle ) );
@@ -821,12 +821,12 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 	}
 
 	const auto rayWheel = [&]( int nWheel ) { return std::min( nWheel, m_nWheels - 1 ); };
-	RealVec3_t axlePoints[2];
+	DoubleVec3_t axlePoints[2];
 	b3Vec3 axleDirections[2];
 	if ( m_nWheelsPerAxle == 2 )
 	{
-		axlePoints[0] = real_t( 0.5f ) * ( contacts[rayWheel( 0 )] + contacts[rayWheel( 1 )] );
-		axlePoints[1] = real_t( 0.5f ) * ( contacts[rayWheel( 2 )] + contacts[rayWheel( 3 )] );
+		axlePoints[0] = 0.5 * ( contacts[rayWheel( 0 )] + contacts[rayWheel( 1 )] );
+		axlePoints[1] = 0.5 * ( contacts[rayWheel( 2 )] + contacts[rayWheel( 3 )] );
 		axleDirections[0] = worldAxles[rayWheel( 0 )];
 		axleDirections[1] = worldAxles[rayWheel( 2 )];
 	}
@@ -906,8 +906,8 @@ void CCarRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 
 void CCarRaycastSystem::UpdateWheelPositions()
 {
-	RealMatrix3_t rotation;
-	RealVec3_t origin;
+	DoubleMatrix3_t rotation;
+	DoubleVec3_t origin;
 	m_pBody->GetPose( m_pBody->GetEnvironment()->GetCurrentTime(), rotation, origin );
 	const b3Vec3 bodyShift = m_pBody->GetShift();
 	for ( int i = 0; i < m_nWheels; ++i )
@@ -922,11 +922,11 @@ void CCarRaycastSystem::UpdateWheelPositions()
 		NormalizeLength( z );
 		const b3Vec3 y = b3Cross( z, x );
 
-		RealMatrix3_t local;
+		DoubleMatrix3_t local;
 		const b3Vec3 columns[3] = { x, y, z };
 		for ( int j = 0; j < 3; ++j )
 		{
-			const RealVec3_t column = Rotate( rotation, columns[j] );
+			const DoubleVec3_t column = Rotate( rotation, columns[j] );
 			local.m[0][j] = column.x;
 			local.m[1][j] = column.y;
 			local.m[2][j] = column.z;
@@ -1107,7 +1107,7 @@ void CAirboatRaycastSystem::TracePontoons( Impact_t *pImpacts, b3Vec3 localVeloc
 
 		impact.m_flWaterDepth = 0.0f;
 		impact.m_bInWater = ( trace.contents & MASK_WATER ) != 0;
-		impact.m_HitPoint = ToReal( SourceToIVP( trace.endpos ) );
+		impact.m_HitPoint = ToDouble( SourceToIVP( trace.endpos ) );
 		impact.m_Normal = SourceToIVPDirection( ToBox3D( trace.plane.normal ) );
 		impact.m_nSurfaceProps = trace.surface.surfaceProps;
 		impact.m_flSurfaceFriction = GetSurfaceFriction( trace.surface.surfaceProps );
@@ -1264,7 +1264,7 @@ void CAirboatRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 {
 	CPhysicsEnvironment *pEnvironment = m_pBody->GetEnvironment();
 	const float flInverseTimestep = pEnvironment->GetInverseTimestep();
-	const RealMatrix3_t &rotation = m_pBody->GetCoreRotation();
+	const DoubleMatrix3_t &rotation = m_pBody->GetCoreRotation();
 	const b3Vec3 velocity = m_pBody->GetCoreVelocity();
 	const float flSpeed = b3Length( velocity );
 	const b3Vec3 localVelocity = m_pBody->IVPToCore( velocity );
@@ -1300,7 +1300,7 @@ void CAirboatRaycastSystem::Simulate( CPhysicsObject *, float flTimestep )
 			impact.m_flFriction = impact.m_flSurfaceFriction * wheel.m_flFrictionScale;
 		}
 
-		impact.m_ContactPoint = impact.m_Start + real_t( impact.m_flHitLength ) * ToReal( impact.m_Direction );
+		impact.m_ContactPoint = impact.m_Start + static_cast<double>( impact.m_flHitLength ) * ToDouble( impact.m_Direction );
 		impact.m_ContactVelocity = GetPointVelocity( m_pBody, impact.m_ContactPoint );
 		impact.m_TangentVelocity = Tangential( impact.m_ContactVelocity, impact.m_Normal );
 		b3Vec3 projectedAxle = Tangential( ToFloat( Rotate( rotation, wheel.m_Axle ) ), impact.m_Normal );

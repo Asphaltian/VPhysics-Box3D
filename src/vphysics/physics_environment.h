@@ -5,7 +5,7 @@
 #include "vphysics/stats.h"
 #include "tier0/valve_minmax_off.h"
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 #include "physics_controller.h"
 #include "physics_filter_table.h"
 #include "physics_task_pool.h"
@@ -215,7 +215,7 @@ public:
 
 	bool AllowsFastRotation() const { return m_flMaxRotationPerStep < CONTINUOUS_ROTATION_LIMIT; }
 
-	RealVec3_t GetIVPGravity() const { return m_IVPGravity; }
+	DoubleVec3_t GetIVPGravity() const { return m_IVPGravity; }
 
 	Vector GetGravityVector() const;
 
@@ -535,7 +535,7 @@ private:
 	float m_flMaxSpeed = 0.0f;
 	float m_flMaxRotationPerStep = 0.0f;
 
-	RealVec3_t m_IVPGravity;
+	DoubleVec3_t m_IVPGravity;
 	CTaskPool m_TaskPool;
 	float m_flAirDensity = 2.0f;
 

@@ -17,12 +17,8 @@ static constexpr float POWERSLIDE_SPEED = 18.0f;
 static constexpr float IDLE_BRAKE = 0.1f;
 static constexpr float REVOLUTIONS_PER_RADIAN = 0.15915494f;
 static constexpr float SECONDS_PER_MINUTE = 60.0f;
-#if defined( VPHYSICS_GMOD )
 static constexpr float ENGINE_POWER_SCALE = 44700.0f;
 static constexpr double REVOLUTIONS_PER_RADIAN_PRECISE = 0.15915494309189535;
-#else
-static constexpr float ENGINE_TORQUE_SCALE = 7114.2256f;
-#endif
 static constexpr float SPEED_LIMIT_FLOOR = 1.0f;
 static constexpr float OVERSPEED_THROTTLE_SCALE = 0.1f;
 static constexpr float BRAKE_TORQUE_SCALE = 0.5f;
@@ -193,12 +189,12 @@ void CPhysicsVehicleController::CreateWheels( CarSystemTemplate_t &carTemplate )
 	matrix3x4_t matrix;
 	AngleMatrix( angles, origin, matrix );
 
-	const RealMatrix3_t &objectRotation = m_pBody->GetCoreRotation();
-	const RealVec3_t objectOrigin = m_pBody->GetCoreOrigin();
+	const DoubleMatrix3_t &objectRotation = m_pBody->GetCoreRotation();
+	const DoubleVec3_t objectOrigin = m_pBody->GetCoreOrigin();
 	const auto toObject = [&]( const Vector &local ) {
 		Vector world;
 		VectorTransform( local, matrix, world );
-		return std::pair( world, ToFloat( InverseRotate( objectRotation, ToReal( SourceToIVP( world ) ) - objectOrigin ) ) );
+		return std::pair( world, ToFloat( InverseRotate( objectRotation, ToDouble( SourceToIVP( world ) ) - objectOrigin ) ) );
 	};
 
 	int nWheel = 0;
@@ -506,12 +502,8 @@ float CPhysicsVehicleController::UpdateEngine( float flThrottle, float flBrake, 
 		float flBaseTorque = 0.0f;
 		if ( m_OperatingParams.engineRPM < engine.maxRPM )
 		{
-#if defined( VPHYSICS_GMOD )
 			const float flPower = ( ( ( flThrottle * engine.horsepower ) * engine.gearRatio[m_OperatingParams.gear] ) * ENGINE_POWER_SCALE ) * engine.axleRatio;
 			flBaseTorque = static_cast<float>( static_cast<double>( flPower ) * ( REVOLUTIONS_PER_RADIAN_PRECISE / static_cast<double>( engine.maxRPM * m_flMaxWheelRadius ) ) );
-#else
-			flBaseTorque = ( ( ( flThrottle * engine.horsepower ) * engine.gearRatio[m_OperatingParams.gear] ) * ( ENGINE_TORQUE_SCALE / ( engine.maxRPM * m_flMaxWheelRadius ) ) ) * engine.axleRatio;
-#endif
 		}
 
 		for ( int i = 0; i < m_VehicleParams.axleCount; ++i )
@@ -588,8 +580,8 @@ void CPhysicsVehicleController::UpdateContacts( bool bHandbrake )
 void CPhysicsVehicleController::UpdateBody()
 {
 	const vehicle_bodyparams_t &body = m_VehicleParams.body;
-	RealMatrix3_t rotation;
-	RealVec3_t origin;
+	DoubleMatrix3_t rotation;
+	DoubleVec3_t origin;
 	m_pBody->GetPose( m_pEnvironment->GetCurrentTime(), rotation, origin );
 	const bool bUpright = std::fabs( static_cast<double>( static_cast<float>( rotation.m[1][1] ) ) ) >= TILT_UPRIGHT;
 	m_pCarSystem->ChangeBodyDownforce( bUpright ? 0.0f : ( m_flGravityLength * body.tiltForce ) * m_flBodyMass );

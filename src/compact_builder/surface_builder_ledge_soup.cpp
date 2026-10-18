@@ -1,7 +1,7 @@
 #include "surface_builder_ledge_soup.h"
 
 #include "compact_surface.h"
-#include "precision.h"
+#include "math_util.h"
 #include "surface_builder_pointsoup.h"
 #include "vector_hash.h"
 
@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -20,17 +19,13 @@
 #include <span>
 #include <utility>
 
-static constexpr real_t BOX_UNIT = static_cast<real_t>( 0.004 );
-static constexpr real_t LEAF_BOX_SCALE = 1 / BOX_UNIT;
+static constexpr double BOX_UNIT = 0.004;
+static constexpr double LEAF_BOX_SCALE = 1 / BOX_UNIT;
 static constexpr float SPLIT_BAND = 1e-6f;
 static constexpr float EMPTY_BOX_EXTENT = 1e6f;
 static constexpr float VOLUME_DEGENERACY_FACTOR = 1e-9f;
 
-#if defined( VPHYSICS_GMOD )
 static constexpr float SPLIT_COST_LIMIT = std::numeric_limits<float>::infinity();
-#else
-static constexpr float SPLIT_COST_LIMIT = 1e20f;
-#endif
 
 static b3Vec3 GetTriangleVertex( const unsigned char *pLedge, const unsigned char *pTriangle, int nEdge )
 {
@@ -42,31 +37,24 @@ static float Component( b3Vec3 v, int nAxis )
 	return nAxis == 0 ? v.x : ( nAxis == 1 ? v.y : v.z );
 }
 
-static RealVec3_t Midpoint( RealVec3_t a, RealVec3_t b )
+static DoubleVec3_t Midpoint( DoubleVec3_t a, DoubleVec3_t b )
 {
-	return real_t( 0.5 ) * a + real_t( 0.5 ) * b;
+	return 0.5 * a + 0.5 * b;
 }
 
-static RealVec3_t RealTriangleNormal( b3Vec3 v0, b3Vec3 v1, b3Vec3 v2 )
+static DoubleVec3_t DoubleTriangleNormal( b3Vec3 v0, b3Vec3 v1, b3Vec3 v2 )
 {
-	const RealVec3_t origin = ToReal( v0 );
-	return Cross( ToReal( v1 ) - origin, ToReal( v2 ) - origin );
+	const DoubleVec3_t origin = ToDouble( v0 );
+	return Cross( ToDouble( v1 ) - origin, ToDouble( v2 ) - origin );
 }
 
-static RealVec3_t NormalizeTriangleNormal( RealVec3_t normal )
+static DoubleVec3_t NormalizeTriangleNormal( DoubleVec3_t normal )
 {
-	const real_t flLengthSquared = LengthSquared( normal );
-#if defined( VPHYSICS_GMOD )
-	if ( !( REAL_RESOLUTION <= flLengthSquared ) )
+	const double flLengthSquared = LengthSquared( normal );
+	if ( !( DOUBLE_RESOLUTION <= flLengthSquared ) )
 		return normal;
 
 	const double flInverse = ApproximateInverseSquareRoot( flLengthSquared, 5 );
-#else
-	if ( flLengthSquared < REAL_RESOLUTION )
-		return normal;
-
-	const float flInverse = 1.0f / std::sqrt( flLengthSquared );
-#endif
 	return flInverse * normal;
 }
 
@@ -93,10 +81,10 @@ static void GetExactBounds( const unsigned char *pLedge, b3Vec3 &mins, b3Vec3 &m
 
 struct LedgeInfo_t
 {
-	RealVec3_t m_Center;
-	real_t m_flRadius;
-	RealVec3_t m_QuantizedMins;
-	RealVec3_t m_QuantizedMaxs;
+	DoubleVec3_t m_Center;
+	double m_flRadius;
+	DoubleVec3_t m_QuantizedMins;
+	DoubleVec3_t m_QuantizedMaxs;
 	unsigned char m_Box[3];
 	int m_nLedge;
 	int m_nLeft;
@@ -105,8 +93,8 @@ struct LedgeInfo_t
 
 static void MergeQuantizedBounds( const LedgeInfo_t &info, b3Vec3 &mins, b3Vec3 &maxs )
 {
-	const RealVec3_t &low = info.m_QuantizedMins;
-	const RealVec3_t &high = info.m_QuantizedMaxs;
+	const DoubleVec3_t &low = info.m_QuantizedMins;
+	const DoubleVec3_t &high = info.m_QuantizedMaxs;
 	mins.x = low.x < mins.x ? static_cast<float>( low.x ) : mins.x;
 	mins.y = low.y < mins.y ? static_cast<float>( low.y ) : mins.y;
 	mins.z = low.z < mins.z ? static_cast<float>( low.z ) : mins.z;
@@ -117,9 +105,8 @@ static void MergeQuantizedBounds( const LedgeInfo_t &info, b3Vec3 &mins, b3Vec3 
 
 static void InitializeNode( LedgeInfo_t &info, b3Vec3 mins, b3Vec3 maxs )
 {
-	const RealVec3_t realMaxs = ToReal( maxs );
-	info.m_Center = Midpoint( realMaxs, ToReal( mins ) );
-	info.m_flRadius = Length( realMaxs - info.m_Center );
+	info.m_Center = Midpoint( ToDouble( maxs ), ToDouble( mins ) );
+	info.m_flRadius = Length( ToDouble( maxs ) - info.m_Center );
 }
 
 static LedgeInfo_t ComputeLedgeInfo( const unsigned char *pLedge, int nLedge )
@@ -135,12 +122,12 @@ static LedgeInfo_t ComputeLedgeInfo( const unsigned char *pLedge, int nLedge )
 	info.m_nLeft = -1;
 	info.m_nRight = -1;
 
-	const real_t flScale = LEAF_BOX_SCALE / info.m_flRadius;
+	const double flScale = LEAF_BOX_SCALE / info.m_flRadius;
 	for ( int nAxis = 0; nAxis < 3; ++nAxis )
 		info.m_Box[nAxis] = static_cast<unsigned char>( static_cast<int>( ( Component( maxs, nAxis ) - Component( info.m_Center, nAxis ) ) * flScale ) + 1 );
 
-	const real_t flUnit = BOX_UNIT * info.m_flRadius;
-	const RealVec3_t extent = { info.m_Box[0] * flUnit, info.m_Box[1] * flUnit, info.m_Box[2] * flUnit };
+	const double flUnit = BOX_UNIT * info.m_flRadius;
+	const DoubleVec3_t extent = { info.m_Box[0] * flUnit, info.m_Box[1] * flUnit, info.m_Box[2] * flUnit };
 	info.m_QuantizedMins = info.m_Center - extent;
 	info.m_QuantizedMaxs = info.m_Center + extent;
 	return info;
@@ -168,7 +155,7 @@ public:
 		LedgeInfo_t node = {};
 		InitializeNode( node, mins, maxs );
 		node.m_nLedge = -1;
-		const real_t flScale = real_t( -1 ) / ( BOX_UNIT * node.m_flRadius );
+		const double flScale = -1.0 / ( BOX_UNIT * node.m_flRadius );
 		for ( int nAxis = 0; nAxis < 3; ++nAxis )
 			node.m_Box[nAxis] = static_cast<unsigned char>( 1 - static_cast<int>( ( Component( maxs, nAxis ) - Component( node.m_Center, nAxis ) ) * flScale ) );
 
@@ -230,20 +217,20 @@ private:
 
 	Split_t Partition( std::span<const int> list, int nAxis, int *pLow, int *pHigh ) const
 	{
-		real_t flSum = 0;
+		double flSum = 0;
 		for ( int nInfo : list )
 			flSum += Component( m_Infos[nInfo].m_Center, nAxis );
 
-		const real_t flMean = flSum / static_cast<real_t>( list.size() );
-		const real_t flLow = flMean - SPLIT_BAND;
-		const real_t flHigh = flMean + SPLIT_BAND;
+		const double flMean = flSum / static_cast<double>( list.size() );
+		const double flLow = flMean - SPLIT_BAND;
+		const double flHigh = flMean + SPLIT_BAND;
 
 		size_t nLowCount = 0;
 		size_t nHighCount = 0;
 		bool bToggle = true;
 		for ( size_t i = 0; i < list.size(); ++i )
 		{
-			const real_t flCenter = Component( m_Infos[list[i]].m_Center, nAxis );
+			const double flCenter = Component( m_Infos[list[i]].m_Center, nAxis );
 			if ( flCenter < flLow )
 			{
 				pLow[nLowCount++] = list[i];
@@ -256,7 +243,7 @@ private:
 			}
 
 			const int nNeighbor = i + 1 < list.size() ? list[i + 1] : list[i - 1];
-			const real_t flNeighbor = Component( m_Infos[nNeighbor].m_Center, nAxis );
+			const double flNeighbor = Component( m_Infos[nNeighbor].m_Center, nAxis );
 			if ( flNeighbor < flLow )
 				pHigh[nHighCount++] = list[i];
 			else if ( flNeighbor > flHigh )
@@ -298,8 +285,8 @@ private:
 
 struct MassProperties_t
 {
-	RealVec3_t m_Center;
-	RealVec3_t m_RotationInertia;
+	DoubleVec3_t m_Center;
+	DoubleVec3_t m_RotationInertia;
 };
 
 static MassProperties_t ComputeFastMassProperties( const std::vector<const unsigned char *> &ledges )
@@ -311,13 +298,11 @@ static MassProperties_t ComputeFastMassProperties( const std::vector<const unsig
 	for ( size_t i = ledges.size() - 1; i >= 1; --i )
 		GetExactBounds( ledges[i], mins, maxs, bFirst );
 
-	const RealVec3_t realMins = ToReal( mins );
-	const RealVec3_t realMaxs = ToReal( maxs );
-	const real_t flInertia = LengthSquared( realMins - realMaxs ) * real_t( 0.125 );
-	return { Midpoint( realMins, realMaxs ), { flInertia, flInertia, flInertia } };
+	const double flInertia = LengthSquared( ToDouble( mins ) - ToDouble( maxs ) ) * 0.125;
+	return { Midpoint( ToDouble( mins ), ToDouble( maxs ) ), { flInertia, flInertia, flInertia } };
 }
 
-static real_t ComputeInertiaRatio( const std::vector<const unsigned char *> &ledges, RealVec3_t center, int a, int b, int c )
+static double ComputeInertiaRatio( const std::vector<const unsigned char *> &ledges, DoubleVec3_t center, int a, int b, int c )
 {
 	double integral = 0.0;
 	double secondMoment = 0.0;
@@ -333,15 +318,15 @@ static real_t ComputeInertiaRatio( const std::vector<const unsigned char *> &led
 			for ( int nEdge = 0; nEdge < 3; ++nEdge )
 			{
 				rawVertices[nEdge] = GetTriangleVertex( pLedge, pTriangle, nEdge );
-				vertices[nEdge] = ToFloat( ToReal( rawVertices[nEdge] ) - center );
+				vertices[nEdge] = ToFloat( ToDouble( rawVertices[nEdge] ) - center );
 			}
 
-			const RealVec3_t normal = NormalizeTriangleNormal( RealTriangleNormal( rawVertices[0], rawVertices[1], rawVertices[2] ) );
-			const real_t nb = Component( normal, b );
-			const real_t nc = Component( normal, c );
+			const DoubleVec3_t normal = NormalizeTriangleNormal( DoubleTriangleNormal( rawVertices[0], rawVertices[1], rawVertices[2] ) );
+			const double nb = Component( normal, b );
+			const double nc = Component( normal, c );
 			const bool bProjectToAB = std::fabs( nb ) <= std::fabs( nc );
-			const double bQuadratic = bProjectToAB ? ( std::fabs( nc ) <= REAL_EPSILON ? 0.0 : static_cast<double>( ( nb * real_t( -0.5 ) ) / nc ) ) : 0.0;
-			const double cQuadratic = bProjectToAB ? 0.0 : static_cast<double>( ( nc * real_t( 0.5 ) ) / nb );
+			const double bQuadratic = bProjectToAB ? ( std::fabs( nc ) <= DOUBLE_EPSILON ? 0.0 : ( nb * -0.5 ) / nc ) : 0.0;
+			const double cQuadratic = bProjectToAB ? 0.0 : ( nc * 0.5 ) / nb;
 
 			double triangleIntegral = 0.0;
 			double triangleSecondMoment = 0.0;
@@ -349,13 +334,13 @@ static real_t ComputeInertiaRatio( const std::vector<const unsigned char *> &led
 			{
 				const b3Vec3 p = vertices[nEdge];
 				const b3Vec3 q = vertices[( nEdge + 1 ) % 3];
-				const RealVec3_t d = ToReal( b3Sub( q, p ) );
-				if ( !( Length( d ) * REAL_EPSILON <= std::fabs( Component( d, a ) ) ) )
+				const DoubleVec3_t d = ToDouble( b3Sub( q, p ) );
+				if ( !( Length( d ) * DOUBLE_EPSILON <= std::fabs( Component( d, a ) ) ) )
 					continue;
 
-				const real_t flInverse = real_t( 1 ) / Component( d, a );
+				const double flInverse = 1.0 / Component( d, a );
 				const double x0 = Component( p, a );
-				const double slopeB = static_cast<double>( flInverse * Component( d, b ) );
+				const double slopeB = flInverse * Component( d, b );
 				const double interceptB = static_cast<double>( Component( p, b ) ) - x0 * slopeB;
 
 				double constant, linear, quadratic;
@@ -367,7 +352,7 @@ static real_t ComputeInertiaRatio( const std::vector<const unsigned char *> &led
 				}
 				else
 				{
-					const double slopeC = static_cast<double>( flInverse * Component( d, c ) );
+					const double slopeC = flInverse * Component( d, c );
 					const double interceptC = static_cast<double>( Component( p, c ) ) - x0 * slopeC;
 					quadratic = ( slopeC * cQuadratic + slopeB ) * slopeC;
 					constant = ( interceptC * cQuadratic + interceptB ) * interceptC;
@@ -392,16 +377,16 @@ static real_t ComputeInertiaRatio( const std::vector<const unsigned char *> &led
 		}
 	}
 
-	return integral >= REAL_RESOLUTION ? static_cast<real_t>( ( 1.0 / integral ) * secondMoment ) : real_t( 1 );
+	return integral >= DOUBLE_RESOLUTION ? ( 1.0 / integral ) * secondMoment : 1.0;
 }
 
 static MassProperties_t ComputeMassProperties( const std::vector<const unsigned char *> &ledges )
 {
 	b3Vec3 weightedCenter = b3Vec3_zero;
-	real_t flVolume = 0;
-	real_t flArea = 0;
+	double flVolume = 0;
+	double flArea = 0;
 
-	const auto accumulate = [&]( real_t flWeight, b3Vec3 point ) {
+	const auto accumulate = [&]( double flWeight, b3Vec3 point ) {
 		weightedCenter.x = static_cast<float>( point.x * flWeight + weightedCenter.x );
 		weightedCenter.y = static_cast<float>( point.y * flWeight + weightedCenter.y );
 		weightedCenter.z = static_cast<float>( point.z * flWeight + weightedCenter.z );
@@ -416,9 +401,9 @@ static MassProperties_t ComputeMassProperties( const std::vector<const unsigned 
 			const b3Vec3 v0 = GetTriangleVertex( pLedge, pTriangle, 0 );
 			const b3Vec3 v1 = GetTriangleVertex( pLedge, pTriangle, 1 );
 			const b3Vec3 v2 = GetTriangleVertex( pLedge, pTriangle, 2 );
-			const b3Vec3 n = ToFloat( RealTriangleNormal( v0, v1, v2 ) );
-			const real_t s = b3Dot( n, v0 );
-			const real_t q = s * real_t( 0.25 );
+			const b3Vec3 n = ToFloat( DoubleTriangleNormal( v0, v1, v2 ) );
+			const double s = b3Dot( n, v0 );
+			const double q = s * 0.25;
 			flVolume += s;
 			flArea += b3LengthSquared( n );
 			accumulate( q, v0 );
@@ -427,21 +412,21 @@ static MassProperties_t ComputeMassProperties( const std::vector<const unsigned 
 		}
 	}
 
-	const real_t flScale = std::sqrt( flArea );
+	const double flScale = std::sqrt( flArea );
 	if ( flVolume <= flScale * flScale * flScale * VOLUME_DEGENERACY_FACTOR )
 		return ComputeFastMassProperties( ledges );
 
-	const RealVec3_t center = ( real_t( 1 ) / flVolume ) * ToReal( weightedCenter );
-	const real_t o0 = ComputeInertiaRatio( ledges, center, 0, 1, 2 );
-	const real_t o1 = ComputeInertiaRatio( ledges, center, 1, 2, 0 );
-	const real_t o2 = ComputeInertiaRatio( ledges, center, 2, 0, 1 );
+	const DoubleVec3_t center = ( 1.0 / flVolume ) * ToDouble( weightedCenter );
+	const double o0 = ComputeInertiaRatio( ledges, center, 0, 1, 2 );
+	const double o1 = ComputeInertiaRatio( ledges, center, 1, 2, 0 );
+	const double o2 = ComputeInertiaRatio( ledges, center, 2, 0, 1 );
 	return { center, { std::sqrt( o2 * o2 + o1 * o1 ), std::sqrt( o2 * o2 + o0 * o0 ), std::sqrt( o1 * o1 + o0 * o0 ) } };
 }
 
-static void ComputeRadius( const std::vector<const unsigned char *> &ledges, RealVec3_t center, real_t &flRadius, real_t &flDeviation )
+static void ComputeRadius( const std::vector<const unsigned char *> &ledges, DoubleVec3_t center, double &flRadius, double &flDeviation )
 {
-	real_t flRadiusSquared = 0;
-	real_t flDeviationSquared = 0;
+	double flRadiusSquared = 0;
+	double flDeviationSquared = 0;
 
 	for ( const unsigned char *pLedge : ledges )
 	{
@@ -452,11 +437,11 @@ static void ComputeRadius( const std::vector<const unsigned char *> &ledges, Rea
 			for ( int nEdge = 0; nEdge < 3; ++nEdge )
 				vertices[nEdge] = GetTriangleVertex( pLedge, pTriangle, nEdge );
 
-			const RealVec3_t n = RealTriangleNormal( vertices[0], vertices[1], vertices[2] );
-			const real_t flInverse = real_t( 1 ) / LengthSquared( n );
+			const DoubleVec3_t n = DoubleTriangleNormal( vertices[0], vertices[1], vertices[2] );
+			const double flInverse = 1.0 / LengthSquared( n );
 			for ( const b3Vec3 &vertex : vertices )
 			{
-				const RealVec3_t d = ToReal( vertex ) - center;
+				const DoubleVec3_t d = ToDouble( vertex ) - center;
 				flRadiusSquared = std::max( flRadiusSquared, LengthSquared( d ) );
 				flDeviationSquared = std::max( flDeviationSquared, LengthSquared( Cross( d, n ) ) * flInverse );
 			}
@@ -472,7 +457,7 @@ using PointKey_t = std::array<uint32_t, 4>;
 static std::vector<unsigned char> BuildOuterHullLedge( const std::vector<const unsigned char *> &sourceLedges )
 {
 	std::map<PointKey_t, int> pointIndices;
-	std::vector<RealVec3_t> points;
+	std::vector<DoubleVec3_t> points;
 	for ( size_t nLedge = sourceLedges.size(); nLedge-- > 0; )
 	{
 		const unsigned char *pLedge = sourceLedges[nLedge];
@@ -483,7 +468,7 @@ static std::vector<unsigned char> BuildOuterHullLedge( const std::vector<const u
 			{
 				const unsigned char *pPoint = GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, nEdge ) );
 				if ( pointIndices.try_emplace( Load<PointKey_t>( pPoint ), static_cast<int>( points.size() ) ).second )
-					points.push_back( ToReal( LoadPoint( pPoint ) ) );
+					points.push_back( ToDouble( LoadPoint( pPoint ) ) );
 			}
 		}
 	}
@@ -667,8 +652,8 @@ static void WriteLedgeTree( std::vector<unsigned char> &surface, size_t nNodeBas
 static void WriteSurfaceHeader( std::vector<unsigned char> &surface, size_t nNodeBase, const std::vector<const unsigned char *> &ledges )
 {
 	const MassProperties_t mass = ComputeMassProperties( ledges );
-	real_t flRadius = 0;
-	real_t flDeviation = 0;
+	double flRadius = 0;
+	double flDeviation = 0;
 	ComputeRadius( ledges, mass.m_Center, flRadius, flDeviation );
 
 	unsigned char *pHeader = surface.data();

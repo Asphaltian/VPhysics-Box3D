@@ -6,9 +6,9 @@
 
 size_t CPhysicsObjectPairHash::ObjectPairHash::operator()( const ObjectPair_t &pair ) const
 {
-	const size_t nFirst = std::hash<void *>()( pair.first );
-	const size_t nSecond = std::hash<void *>()( pair.second );
-	return nFirst ^ ( nSecond + 0x9E3779B97F4A7C15ull + ( nFirst << 6 ) + ( nFirst >> 2 ) );
+	const uint64_t nFirst = std::hash<void *>()( pair.first );
+	const uint64_t nSecond = std::hash<void *>()( pair.second );
+	return static_cast<size_t>( nFirst ^ ( nSecond + 0x9E3779B97F4A7C15ull + ( nFirst << 6 ) + ( nFirst >> 2 ) ) );
 }
 
 CPhysicsObjectPairHash::ObjectPair_t CPhysicsObjectPairHash::MakePair( void *pObject0, void *pObject1 )

@@ -22,7 +22,6 @@
 #include <cfloat>
 #include <cmath>
 #include <new>
-#include <numbers>
 #include <vector>
 
 static constexpr float MAX_INERTIA = 1e18f;
@@ -57,15 +56,11 @@ static constexpr float AXIS_LENGTH_BIAS = 1e-10f;
 static constexpr float MASS_CENTER_OVERRIDE_DISTANCE = 1.0f / 256.0f;
 static constexpr short COLLIDE_TYPE_POLYGON = 0;
 static constexpr short COLLIDE_TYPE_SPHERE = 2;
-#if defined( VPHYSICS_GMOD )
 static constexpr double NO_SHIFT_DISTANCE_SQUARED = 1e-16;
-#else
-static constexpr float NO_SHIFT_DISTANCE_SQUARED = 9e-6f;
-#endif
 
-static RealVec3_t TransformShift( const RealMatrix3_t &rotation, b3Vec3 shift, RealVec3_t origin )
+static DoubleVec3_t TransformShift( const DoubleMatrix3_t &rotation, b3Vec3 shift, DoubleVec3_t origin )
 {
-	const RealVec3_t rotated = Rotate( rotation, shift );
+	const DoubleVec3_t rotated = Rotate( rotation, shift );
 	return { rotated.x + origin.x, rotated.y + origin.y, rotated.z + origin.z };
 }
 
@@ -125,12 +120,12 @@ static int GetShapeWorldMaterial( b3ShapeId shape )
 	return static_cast<const CPhysConvex *>( pUserData )->GetUniformMaterial();
 }
 
-static RealVec3_t RoundToFloat( RealVec3_t v )
+static DoubleVec3_t RoundToFloat( DoubleVec3_t v )
 {
-	return ToReal( ToFloat( v ) );
+	return ToDouble( ToFloat( v ) );
 }
 
-static RealQuat_t RoundToFloat( RealQuat_t q )
+static DoubleQuat_t RoundToFloat( DoubleQuat_t q )
 {
 	return { static_cast<float>( q.x ), static_cast<float>( q.y ), static_cast<float>( q.z ), static_cast<float>( q.w ) };
 }
@@ -153,20 +148,14 @@ static b3Vec3 ComputeControlVelocity( b3Vec3 velocity, b3Vec3 delta, float flMax
 	return b3Add( b3Add( damping, velocity ), acceleration );
 }
 
-static b3Vec3 GetRotationDelta( RealQuat_t from, RealQuat_t to )
+static b3Vec3 GetRotationDelta( DoubleQuat_t from, DoubleQuat_t to )
 {
-	const RealQuat_t delta = NormalizeQuat( MultiplyQuat( ConjugateQuat( from ), to ) );
+	const DoubleQuat_t delta = NormalizeQuat( MultiplyQuat( ConjugateQuat( from ), to ) );
 
 	double flAngle = 2.0 * std::acos( std::clamp( static_cast<double>( delta.w ), -1.0, 1.0 ) );
-#if defined( VPHYSICS_GMOD )
 	float flWrapped = static_cast<float>( flAngle );
 	if ( flWrapped > 3.1415927f )
 		flWrapped -= 6.2831855f;
-#else
-	if ( flAngle > std::numbers::pi )
-		flAngle -= 2.0 * std::numbers::pi;
-	const float flWrapped = static_cast<float>( flAngle );
-#endif
 
 	b3Vec3 axis = ToFloat( { delta.x, delta.y, delta.z } );
 	axis = b3MulSV( FastInverseSquareRoot( b3LengthSquared( axis ) + AXIS_LENGTH_BIAS ), axis );
@@ -222,7 +211,7 @@ CPhysicsObject *CPhysicsObject::CreatePolyObject( CPhysicsEnvironment *pEnvironm
 	pObject->ComputeMassProperties( *pParams, massCenter, unitInertia );
 	pObject->ComputeRestRadius( massCenter );
 	pObject->m_bAsleepSinceCreation = true;
-	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( origin ) ), AnglesToIVP( rotation ), massCenter, pParams->volume );
+	pObject->Initialize( *pParams, materialIndex, ToDouble( SourceToIVP( origin ) ), AnglesToIVP( rotation ), massCenter, pParams->volume );
 	if ( !isStatic && pParams->dragCoefficient != 0.0f )
 		pObject->EnableDrag( true );
 	return pObject;
@@ -238,7 +227,7 @@ CPhysicsObject *CPhysicsObject::CreateSphereObject( CPhysicsEnvironment *pEnviro
 	pObject->m_flRestRadius = flRadius;
 	pObject->ComputeMassProperties( *pParams, b3Vec3_zero, { flUnitInertia, flUnitInertia, flUnitInertia } );
 	const float flVolume = pParams->volume > 0.0f ? pParams->volume : ( ( radius * radius ) * radius ) * 4.0f * SPHERE_VOLUME_SCALE;
-	pObject->Initialize( *pParams, materialIndex, ToReal( SourceToIVP( position ) ), AnglesToIVP( angles ), b3Vec3_zero, flVolume );
+	pObject->Initialize( *pParams, materialIndex, ToDouble( SourceToIVP( position ) ), AnglesToIVP( angles ), b3Vec3_zero, flVolume );
 	return pObject;
 }
 
@@ -301,7 +290,7 @@ void CPhysicsObject::InitializeFromRecord( const objectparams_t &params, const v
 	UpdateInverseMass();
 
 	const int nMaterialIndex = record.materialIndex < 0 ? g_PhysicsSurfaceProps.GetSurfaceIndex( "default" ) : record.materialIndex;
-	Initialize( params, nMaterialIndex, ToReal( SourceToIVP( record.origin ) ), AnglesToIVP( record.angles ), massCenter, record.volume );
+	Initialize( params, nMaterialIndex, ToDouble( SourceToIVP( record.origin ) ), AnglesToIVP( record.angles ), massCenter, record.volume );
 
 	SetCallbackFlags( static_cast<unsigned short>( record.callbacks ) );
 	SetGameFlags( static_cast<unsigned short>( record.gameFlags ) );
@@ -377,7 +366,7 @@ void CPhysicsObject::WriteRecord( vphysics_save_cphysicsobject_t &record ) const
 	GetVelocity( &record.velocity, &record.angVelocity );
 }
 
-void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex, RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter, float flVolume )
+void CPhysicsObject::Initialize( const objectparams_t &params, int materialIndex, DoubleVec3_t origin, DoubleQuat_t rotation, b3Vec3 massCenter, float flVolume )
 {
 	m_nMaterialIndex = static_cast<unsigned short>( materialIndex );
 	m_nCallbackFlags = CALLBACK_GLOBAL_COLLISION | CALLBACK_GLOBAL_FRICTION | CALLBACK_GLOBAL_TOUCH | CALLBACK_GLOBAL_COLLIDE_STATIC | CALLBACK_FLUID_TOUCH | CALLBACK_DO_FLUID_SIMULATION;
@@ -500,7 +489,7 @@ void CPhysicsObject::CreateShapes( bool bSensor )
 		{
 			for ( const std::unique_ptr<CollideMesh_t> &pMesh : *pMeshes )
 			{
-				shapeDef.userData = const_cast<CollideMesh_t *>( pMesh.get() );
+				shapeDef.userData = pMesh.get();
 				shapeDef.baseMaterial = GetMeshMaterial( *pMesh, objectMaterial );
 				b3CreateMeshShape( m_Body, &shapeDef, pMesh->m_pData, b3Vec3_one );
 			}
@@ -515,7 +504,7 @@ void CPhysicsObject::CreateShapes( bool bSensor )
 			if ( !pHull )
 				continue;
 
-			shapeDef.userData = const_cast<CPhysConvex *>( pConvex.get() );
+			shapeDef.userData = pConvex.get();
 			shapeDef.baseMaterial = GetConvexMaterial( *pConvex, objectMaterial );
 			b3CreateHullShape( m_Body, &shapeDef, pHull );
 		}
@@ -619,29 +608,29 @@ Vector CPhysicsObject::GetPreStepVelocityAtPoint( const Vector &worldPosition ) 
 	return ToSource( b3Add( m_PreStepVelocity, b3Cross( m_PreStepAngularVelocity, offset ) ) );
 }
 
-void CPhysicsObject::InitializePose( RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter )
+void CPhysicsObject::InitializePose( DoubleVec3_t origin, DoubleQuat_t rotation, b3Vec3 massCenter )
 {
-	const RealMatrix3_t matrix = QuatToMatrix( NormalizeQuat( rotation ) );
+	const DoubleMatrix3_t matrix = QuatToMatrix( NormalizeQuat( rotation ) );
 	const auto &a = matrix.m;
-	RealMatrix3_t frame;
+	DoubleMatrix3_t frame;
 	for ( int i = 0; i < 3; ++i )
 	{
 		for ( int j = 0; j < 3; ++j )
 		{
-			const real_t b0 = j == 0 ? real_t( 1 ) : real_t( 0 );
-			const real_t b1 = j == 1 ? real_t( 1 ) : real_t( 0 );
-			const real_t b2 = j == 2 ? real_t( 1 ) : real_t( 0 );
+			const double b0 = j == 0 ? 1.0 : 0.0;
+			const double b1 = j == 1 ? 1.0 : 0.0;
+			const double b2 = j == 2 ? 1.0 : 0.0;
 			frame.m[i][j] = ( a[i][0] * b0 + a[i][1] * b1 ) + a[i][2] * b2;
 		}
 	}
 
-	const real_t c[3] = { massCenter.x, massCenter.y, massCenter.z };
-	const real_t p[3] = { origin.x, origin.y, origin.z };
-	real_t core[3];
+	const double c[3] = { massCenter.x, massCenter.y, massCenter.z };
+	const double p[3] = { origin.x, origin.y, origin.z };
+	double core[3];
 	for ( int k = 0; k < 3; ++k )
 		core[k] = ( c[0] * a[k][0] + c[2] * a[k][2] ) + ( c[1] * a[k][1] + p[k] );
 
-	const RealQuat_t coreRotation = MatrixToQuat( frame );
+	const DoubleQuat_t coreRotation = MatrixToQuat( frame );
 	m_LastRotation = coreRotation;
 	m_NextRotation = coreRotation;
 	m_CorePosition = { core[0], core[1], core[2] };
@@ -653,24 +642,24 @@ void CPhysicsObject::InitializePose( RealVec3_t origin, RealQuat_t rotation, b3V
 	m_flInverseStepInterval = flInterval <= MIN_STEP_INTERVAL ? MAX_INVERSE_STEP_INTERVAL : 1.0f / flInterval;
 }
 
-RealVec3_t CPhysicsObject::GetCorePositionAt( double flTime ) const
+DoubleVec3_t CPhysicsObject::GetCorePositionAt( double flTime ) const
 {
-	const real_t flElapsed = static_cast<float>( flTime - m_flLastStepTime );
+	const double flElapsed = static_cast<float>( flTime - m_flLastStepTime );
 	return {
-		real_t( m_ImplicitVelocity.x ) * flElapsed + m_CorePosition.x,
-		real_t( m_ImplicitVelocity.y ) * flElapsed + m_CorePosition.y,
-		real_t( m_ImplicitVelocity.z ) * flElapsed + m_CorePosition.z,
+		static_cast<double>( m_ImplicitVelocity.x ) * flElapsed + m_CorePosition.x,
+		static_cast<double>( m_ImplicitVelocity.y ) * flElapsed + m_CorePosition.y,
+		static_cast<double>( m_ImplicitVelocity.z ) * flElapsed + m_CorePosition.z,
 	};
 }
 
-void CPhysicsObject::GetPose( double flTime, RealMatrix3_t &rotation, RealVec3_t &origin ) const
+void CPhysicsObject::GetPose( double flTime, DoubleMatrix3_t &rotation, DoubleVec3_t &origin ) const
 {
-	const RealVec3_t position = GetCorePositionAt( flTime );
+	const DoubleVec3_t position = GetCorePositionAt( flTime );
 	rotation = QuatToMatrix( GetRotationAt( flTime ) );
 	origin = m_bNoShift ? position : TransformShift( rotation, m_Shift, position );
 }
 
-RealQuat_t CPhysicsObject::GetRotationAt( double flTime ) const
+DoubleQuat_t CPhysicsObject::GetRotationAt( double flTime ) const
 {
 	const float flElapsed = static_cast<float>( flTime - m_flLastStepTime );
 	return InterpolateQuat( m_LastRotation, m_NextRotation, flElapsed * m_flInverseStepInterval );
@@ -678,19 +667,19 @@ RealQuat_t CPhysicsObject::GetRotationAt( double flTime ) const
 
 b3Transform CPhysicsObject::GetBodyTransform() const
 {
-	const RealMatrix3_t rotation = QuatToMatrix( m_NextRotation );
-	const RealVec3_t origin = m_bNoShift ? m_CorePosition : TransformShift( rotation, m_Shift, m_CorePosition );
+	const DoubleMatrix3_t rotation = QuatToMatrix( m_NextRotation );
+	const DoubleVec3_t origin = m_bNoShift ? m_CorePosition : TransformShift( rotation, m_Shift, m_CorePosition );
 	return { ToBox3D( IVPToSourcePosition( origin ) ), IVPToBox3D( m_NextRotation ) };
 }
 
-void CPhysicsObject::MoveTo( RealVec3_t origin, RealQuat_t rotation, bool isTeleport )
+void CPhysicsObject::MoveTo( DoubleVec3_t origin, DoubleQuat_t rotation, bool isTeleport )
 {
 	const bool bCycleCollisions = isTeleport && m_bCollisionEnabled;
 	if ( bCycleCollisions )
 		EnableCollisions( false );
 
-	const RealMatrix3_t matrix = QuatToMatrix( rotation );
-	const RealVec3_t core = m_bNoShift ? origin : TransformShift( matrix, b3Neg( m_Shift ), origin );
+	const DoubleMatrix3_t matrix = QuatToMatrix( rotation );
+	const DoubleVec3_t core = m_bNoShift ? origin : TransformShift( matrix, b3Neg( m_Shift ), origin );
 
 	const float flElapsed = static_cast<float>( m_pEnvironment->GetCurrentTime() - m_flLastStepTime );
 	m_flInverseStepInterval = flElapsed < m_pEnvironment->GetSimulationTimestep() ? m_pEnvironment->GetInverseTimestep() : 1.0f / flElapsed;
@@ -716,9 +705,9 @@ void CPhysicsObject::MoveTo( RealVec3_t origin, RealQuat_t rotation, bool isTele
 void CPhysicsObject::StepUp( float height )
 {
 	const double flTime = m_pEnvironment->GetCurrentTime();
-	const RealQuat_t rotation = GetRotationAt( flTime );
-	const RealVec3_t position = GetCorePositionAt( flTime );
-	RealVec3_t origin = m_bNoShift ? position : TransformShift( QuatToMatrix( rotation ), m_Shift, position );
+	const DoubleQuat_t rotation = GetRotationAt( flTime );
+	const DoubleVec3_t position = GetCorePositionAt( flTime );
+	DoubleVec3_t origin = m_bNoShift ? position : TransformShift( QuatToMatrix( rotation ), m_Shift, position );
 	origin.y -= height * SOURCE_TO_IVP;
 	MoveTo( origin, rotation, false );
 }
@@ -727,11 +716,11 @@ void CPhysicsObject::RebuildCoreMatrix( double flTime )
 {
 	m_PreviousCorePosition = m_CorePosition;
 	m_PreviousRotation = m_LastRotation;
-	const real_t flElapsed = static_cast<float>( flTime - m_flLastStepTime );
+	const double flElapsed = static_cast<float>( flTime - m_flLastStepTime );
 	m_CorePosition = {
-		m_CorePosition.x + flElapsed * real_t( m_ImplicitVelocity.x ),
-		m_CorePosition.y + flElapsed * real_t( m_ImplicitVelocity.y ),
-		m_CorePosition.z + flElapsed * real_t( m_ImplicitVelocity.z ),
+		m_CorePosition.x + flElapsed * static_cast<double>( m_ImplicitVelocity.x ),
+		m_CorePosition.y + flElapsed * static_cast<double>( m_ImplicitVelocity.y ),
+		m_CorePosition.z + flElapsed * static_cast<double>( m_ImplicitVelocity.z ),
 	};
 	m_LastRotation = m_NextRotation;
 	m_CoreRotation = QuatToMatrix( m_LastRotation );
@@ -745,8 +734,8 @@ void CPhysicsObject::UpdateTransform( const b3Transform &transform )
 	if ( m_flLastStepTime != m_pEnvironment->GetLastStepTime() )
 		RebuildCoreMatrix( m_pEnvironment->GetLastStepTime() );
 
-	const RealVec3_t next = ToReal( SourceToIVP( b3TransformPoint( transform, ToBox3D( m_MassCenter ) ) ) );
-	const real_t flInverseTimestep = m_pEnvironment->GetInverseTimestep();
+	const DoubleVec3_t next = ToDouble( SourceToIVP( b3TransformPoint( transform, ToBox3D( m_MassCenter ) ) ) );
+	const double flInverseTimestep = m_pEnvironment->GetInverseTimestep();
 	m_ImplicitVelocity = ToFloat( flInverseTimestep * ( next - m_CorePosition ) );
 	m_NextRotation = Box3DToIVP( transform.q );
 	m_flInverseStepInterval = m_pEnvironment->GetInverseTimestep();
@@ -759,7 +748,7 @@ void CPhysicsObject::NotifySleep( const b3Transform &transform )
 
 	m_NextRotation = Box3DToIVP( transform.q );
 	m_LastRotation = m_NextRotation;
-	m_CorePosition = ToReal( SourceToIVP( b3TransformPoint( transform, ToBox3D( m_MassCenter ) ) ) );
+	m_CorePosition = ToDouble( SourceToIVP( b3TransformPoint( transform, ToBox3D( m_MassCenter ) ) ) );
 	m_CoreRotation = QuatToMatrix( m_NextRotation );
 	m_ImplicitVelocity = b3Vec3_zero;
 	m_flLastStepTime = m_pEnvironment->GetLastStepTime();
@@ -789,13 +778,13 @@ void CPhysicsObject::ComputeRestRadius( b3Vec3 massCenter )
 		m_flRestRadius = pSurface->GetUpperLimitRadius() + std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
 }
 
-real_t CPhysicsObject::GetRotationDistance( RealQuat_t a, RealQuat_t b ) const
+double CPhysicsObject::GetRotationDistance( DoubleQuat_t a, DoubleQuat_t b ) const
 {
-	const real_t flDot = ( ( a.x * b.x + a.y * b.y ) + a.z * b.z ) + a.w * b.w;
-	return ( ( real_t( 2 ) * ( real_t( 1 ) - flDot * flDot ) ) * m_flRestRadius ) * m_flRestRadius;
+	const double flDot = ( ( a.x * b.x + a.y * b.y ) + a.z * b.z ) + a.w * b.w;
+	return ( ( 2.0 * ( 1.0 - flDot * flDot ) ) * m_flRestRadius ) * m_flRestRadius;
 }
 
-void CPhysicsObject::GetRestPose( bool bInStep, RealVec3_t &position, RealQuat_t &nextRotation, RealQuat_t &lastRotation ) const
+void CPhysicsObject::GetRestPose( bool bInStep, DoubleVec3_t &position, DoubleQuat_t &nextRotation, DoubleQuat_t &lastRotation ) const
 {
 	position = bInStep ? m_PreviousCorePosition : m_CorePosition;
 	nextRotation = m_NextRotation;
@@ -822,8 +811,8 @@ void CPhysicsObject::ResetRestTimers( double flTime )
 
 CPhysicsObject::RestState_t CPhysicsObject::EvaluateRest( double flTime, bool bInStep, bool &bMoved, bool &bCoarseMoved ) const
 {
-	RealVec3_t position;
-	RealQuat_t nextRotation, lastRotation;
+	DoubleVec3_t position;
+	DoubleQuat_t nextRotation, lastRotation;
 	GetRestPose( bInStep, position, nextRotation, lastRotation );
 
 	bMoved = LengthSquared( position - m_FineRestPosition ) > REST_DISTANCE_SQUARED || GetRotationDistance( nextRotation, m_FineRestRotation ) > REST_ROTATION;
@@ -851,8 +840,8 @@ CPhysicsObject::RestState_t CPhysicsObject::CheckRest( double flTime, bool bInSt
 	if ( !bMoved )
 		return m_nRestState;
 
-	RealVec3_t position;
-	RealQuat_t nextRotation, lastRotation;
+	DoubleVec3_t position;
+	DoubleQuat_t nextRotation, lastRotation;
 	GetRestPose( bInStep, position, nextRotation, lastRotation );
 	m_FineRestRotation = RoundToFloat( nextRotation );
 	m_FineRestPosition = RoundToFloat( position );
@@ -884,8 +873,8 @@ void CPhysicsObject::PrepareForcedRest( double flTime )
 
 void CPhysicsObject::Freeze( bool bInStep )
 {
-	RealVec3_t position;
-	RealQuat_t nextRotation, lastRotation;
+	DoubleVec3_t position;
+	DoubleQuat_t nextRotation, lastRotation;
 	GetRestPose( bInStep, position, nextRotation, lastRotation );
 
 	m_PendingVelocity = b3Vec3_zero;
@@ -1289,7 +1278,7 @@ b3Vec3 CPhysicsObject::CoreToIVP( b3Vec3 local ) const
 	return ToFloat( Rotate( m_CoreRotation, local ) );
 }
 
-RealVec3_t CPhysicsObject::TransformCorePoint( b3Vec3 localPoint ) const
+DoubleVec3_t CPhysicsObject::TransformCorePoint( b3Vec3 localPoint ) const
 {
 	return Rotate( m_CoreRotation, localPoint ) + m_CorePosition;
 }
@@ -1303,9 +1292,9 @@ b3Vec3 CPhysicsObject::GetCoreOffset( const Vector &worldPosition ) const
 {
 	const b3Vec3 position = SourceToIVP( worldPosition );
 	return {
-		static_cast<float>( real_t( position.x ) - m_CorePosition.x ),
-		static_cast<float>( real_t( position.y ) - m_CorePosition.y ),
-		static_cast<float>( real_t( position.z ) - m_CorePosition.z ),
+		static_cast<float>( static_cast<double>( position.x ) - m_CorePosition.x ),
+		static_cast<float>( static_cast<double>( position.y ) - m_CorePosition.y ),
+		static_cast<float>( static_cast<double>( position.z ) - m_CorePosition.z ),
 	};
 }
 
@@ -1332,7 +1321,7 @@ void CPhysicsObject::SetPosition( const Vector &worldPosition, const QAngle &ang
 	if ( m_pShadow )
 		UpdateShadow( worldPosition, angles, false, 0.0f );
 
-	MoveTo( ToReal( SourceToIVP( worldPosition ) ), AnglesToIVP( angles ), isTeleport );
+	MoveTo( ToDouble( SourceToIVP( worldPosition ) ), AnglesToIVP( angles ), isTeleport );
 }
 
 void CPhysicsObject::SetPositionMatrix( const matrix3x4_t &matrix, bool isTeleport )
@@ -1340,15 +1329,15 @@ void CPhysicsObject::SetPositionMatrix( const matrix3x4_t &matrix, bool isTelepo
 	if ( m_pShadow )
 		UpdateShadow( Vector( matrix[0][3], matrix[1][3], matrix[2][3] ), MatrixAngles( matrix ), false, 0.0f );
 
-	RealVec3_t origin;
-	const RealQuat_t rotation = MatrixToIVP( matrix, origin );
+	DoubleVec3_t origin;
+	const DoubleQuat_t rotation = MatrixToIVP( matrix, origin );
 	MoveTo( origin, rotation, isTeleport );
 }
 
 void CPhysicsObject::GetPosition( Vector *worldPosition, QAngle *angles ) const
 {
-	RealMatrix3_t rotation;
-	RealVec3_t origin;
+	DoubleMatrix3_t rotation;
+	DoubleVec3_t origin;
 	GetPose( m_pEnvironment->GetCurrentTime(), rotation, origin );
 	if ( worldPosition )
 		*worldPosition = IVPToSourcePosition( origin );
@@ -1358,8 +1347,8 @@ void CPhysicsObject::GetPosition( Vector *worldPosition, QAngle *angles ) const
 
 void CPhysicsObject::GetPositionMatrix( matrix3x4_t *positionMatrix ) const
 {
-	RealMatrix3_t rotation;
-	RealVec3_t origin;
+	DoubleMatrix3_t rotation;
+	DoubleVec3_t origin;
 	GetPose( m_pEnvironment->GetCurrentTime(), rotation, origin );
 	IVPToMatrix( rotation, origin, *positionMatrix );
 }
@@ -1460,7 +1449,7 @@ void CPhysicsObject::GetImplicitVelocity( Vector *velocity, AngularImpulse *angu
 
 	if ( angularVelocity )
 	{
-		const RealQuat_t delta = MultiplyQuat( ConjugateQuat( m_LastRotation ), m_NextRotation );
+		const DoubleQuat_t delta = MultiplyQuat( ConjugateQuat( m_LastRotation ), m_NextRotation );
 		float flAngle = static_cast<float>( 2.0 * std::acos( std::clamp( static_cast<double>( delta.w ), -1.0, 1.0 ) ) ) * RADIANS_TO_DEGREES;
 		if ( flAngle > 180.0f )
 			flAngle -= 360.0f;
@@ -1518,7 +1507,7 @@ void CPhysicsObject::ApplyForceOffset( const Vector &forceVector, const Vector &
 	if ( !IsMoveable() )
 		return;
 
-	ApplyImpulse( ToReal( SourceToIVP( worldPosition ) ), SourceToIVP( forceVector ) );
+	ApplyImpulse( ToDouble( SourceToIVP( worldPosition ) ), SourceToIVP( forceVector ) );
 	Wake();
 	ClampVelocity( true );
 }
@@ -1631,7 +1620,7 @@ void CPhysicsObject::ComputeMassProperties( const objectparams_t &params, b3Vec3
 	else if ( flFactor >= MAX_INERTIA )
 		flFactor = MAX_INERTIA;
 
-	const real_t flShiftSquared = ( real_t( massCenter.x ) * massCenter.x + real_t( massCenter.y ) * massCenter.y ) + real_t( massCenter.z ) * massCenter.z;
+	const double flShiftSquared = ( static_cast<double>( massCenter.x ) * massCenter.x + static_cast<double>( massCenter.y ) * massCenter.y ) + static_cast<double>( massCenter.z ) * massCenter.z;
 	m_bNoShift = flShiftSquared < NO_SHIFT_DISTANCE_SQUARED;
 	if ( m_bNoShift )
 	{
@@ -1648,7 +1637,7 @@ void CPhysicsObject::ComputeMassProperties( const objectparams_t &params, b3Vec3
 	if ( params.rotInertiaLimit != 0.0f )
 	{
 		const float flLengthSquared = ( inertia.x * inertia.x + inertia.y * inertia.y ) + inertia.z * inertia.z;
-		const float flFloor = static_cast<float>( std::sqrt( real_t( flLengthSquared ) ) * params.rotInertiaLimit );
+		const float flFloor = static_cast<float>( std::sqrt( static_cast<double>( flLengthSquared ) ) * params.rotInertiaLimit );
 		inertia.x = flFloor > inertia.x ? flFloor : inertia.x;
 		inertia.y = flFloor > inertia.y ? flFloor : inertia.y;
 		inertia.z = flFloor > inertia.z ? flFloor : inertia.z;
@@ -1658,19 +1647,19 @@ void CPhysicsObject::ComputeMassProperties( const objectparams_t &params, b3Vec3
 	UpdateInverseMass();
 }
 
-void CPhysicsObject::ApplyImpulse( RealVec3_t worldPosition, b3Vec3 impulse )
+void CPhysicsObject::ApplyImpulse( DoubleVec3_t worldPosition, b3Vec3 impulse )
 {
 	const b3Vec3 offset = ToFloat( worldPosition - m_CorePosition );
 	m_PendingAngularVelocity = b3Add( m_PendingAngularVelocity, b3Mul( IVPToCore( b3Cross( offset, impulse ) ), GetCoreInverseInertia() ) );
 	m_PendingVelocity = {
-		static_cast<float>( real_t( impulse.x ) * real_t( m_flInvMass ) + real_t( m_PendingVelocity.x ) ),
-		static_cast<float>( real_t( impulse.y ) * real_t( m_flInvMass ) + real_t( m_PendingVelocity.y ) ),
-		static_cast<float>( real_t( impulse.z ) * real_t( m_flInvMass ) + real_t( m_PendingVelocity.z ) ),
+		static_cast<float>( static_cast<double>( impulse.x ) * static_cast<double>( m_flInvMass ) + static_cast<double>( m_PendingVelocity.x ) ),
+		static_cast<float>( static_cast<double>( impulse.y ) * static_cast<double>( m_flInvMass ) + static_cast<double>( m_PendingVelocity.y ) ),
+		static_cast<float>( static_cast<double>( impulse.z ) * static_cast<double>( m_flInvMass ) + static_cast<double>( m_PendingVelocity.z ) ),
 	};
 	QueuePendingVelocity();
 }
 
-void CPhysicsObject::ApplyDirectImpulse( RealVec3_t worldPosition, b3Vec3 impulse )
+void CPhysicsObject::ApplyDirectImpulse( DoubleVec3_t worldPosition, b3Vec3 impulse )
 {
 	const b3Vec3 offset = ToFloat( worldPosition - m_CorePosition );
 	SetCoreAngularVelocity( b3Add( GetCoreAngularVelocity(), b3Mul( IVPToCore( b3Cross( offset, impulse ) ), GetCoreInverseInertia() ) ) );
@@ -1695,13 +1684,13 @@ void CPhysicsObject::SetPendingAngularVelocity( b3Vec3 angular )
 	QueuePendingVelocity();
 }
 
-void CPhysicsObject::ApplyGravity( float flTimestep, RealVec3_t gravity, bool bWorldGravity )
+void CPhysicsObject::ApplyGravity( float flTimestep, DoubleVec3_t gravity, bool bWorldGravity )
 {
 	if ( !m_bMotionEnabled )
 		return;
 
 	const float flRestDamping = m_nRestState >= REST_RESTING ? REST_DAMPING : 0.0f;
-	const real_t b = real_t( flTimestep ) * ( m_flSpeedDamping + flRestDamping );
+	const double b = static_cast<double>( flTimestep ) * ( m_flSpeedDamping + flRestDamping );
 	const float a = flTimestep * ( m_flRotDamping + flRestDamping );
 	b3Vec3 angular = GetCoreAngularVelocity();
 	if ( ( a * a + a * a ) + a * a < ANGULAR_DAMPING_EXPONENTIAL_LIMIT )
@@ -1710,13 +1699,13 @@ void CPhysicsObject::ApplyGravity( float flTimestep, RealVec3_t gravity, bool bW
 	}
 	else
 	{
-		const real_t flExponential = std::exp( -real_t( a ) );
+		const double flExponential = std::exp( -static_cast<double>( a ) );
 		angular = { std::exp( -a ) * angular.x, static_cast<float>( flExponential ) * angular.y, static_cast<float>( flExponential ) * angular.z };
 	}
 
-	const real_t flLinearFactor = b < real_t( LINEAR_DAMPING_EXPONENTIAL_LIMIT ) ? real_t( 1 ) - b : std::exp( -b );
+	const double flLinearFactor = b < static_cast<double>( LINEAR_DAMPING_EXPONENTIAL_LIMIT ) ? 1.0 - b : std::exp( -b );
 	const b3Vec3 speed = GetCoreVelocity();
-	b3Vec3 damped = { static_cast<float>( real_t( speed.x ) * flLinearFactor ), static_cast<float>( real_t( speed.y ) * flLinearFactor ), static_cast<float>( real_t( speed.z ) * flLinearFactor ) };
+	b3Vec3 damped = { static_cast<float>( static_cast<double>( speed.x ) * flLinearFactor ), static_cast<float>( static_cast<double>( speed.y ) * flLinearFactor ), static_cast<float>( static_cast<double>( speed.z ) * flLinearFactor ) };
 	SetCoreAngularVelocity( b3Add( angular, m_PendingAngularVelocity ) );
 	damped = b3Add( damped, m_PendingVelocity );
 	m_PendingVelocity = b3Vec3_zero;
@@ -1728,11 +1717,7 @@ void CPhysicsObject::ApplyGravity( float flTimestep, RealVec3_t gravity, bool bW
 
 static b3Vec3 ScaleDrag( b3Vec3 v, float k )
 {
-#if defined( VPHYSICS_GMOD )
 	const float x = v.x * k + v.x;
-#else
-	const float x = ( k + 1.0f ) * v.x;
-#endif
 	return { x, v.y * k + v.y, v.z * k + v.z };
 }
 
@@ -1950,8 +1935,8 @@ void CPhysicsObject::UpdateShadow( const Vector &targetPosition, const QAngle &t
 
 int CPhysicsObject::GetShadowPosition( Vector *position, QAngle *angles ) const
 {
-	RealMatrix3_t rotation;
-	RealVec3_t origin;
+	DoubleMatrix3_t rotation;
+	DoubleVec3_t origin;
 	GetPose( m_pEnvironment->GetNextStepTime(), rotation, origin );
 	if ( position )
 		*position = IVPToSourcePosition( origin );
@@ -1969,7 +1954,7 @@ void CPhysicsObject::RemoveShadowController()
 	m_pShadow = nullptr;
 }
 
-RealVec3_t CPhysicsObject::GetCoreOrigin() const
+DoubleVec3_t CPhysicsObject::GetCoreOrigin() const
 {
 	return m_bNoShift ? m_CorePosition : TransformShift( m_CoreRotation, m_Shift, m_CorePosition );
 }
@@ -1982,7 +1967,7 @@ void CPhysicsObject::ApplyShadowControl( ShadowControl_t &control, float flSecon
 	if ( flFraction <= 0.0f )
 		return;
 
-	const RealVec3_t origin = GetCoreOrigin();
+	const DoubleVec3_t origin = GetCoreOrigin();
 	b3Vec3 delta = ToFloat( control.m_TargetPosition - origin );
 
 	if ( control.m_flTeleportDistance > 0.0f )
@@ -1999,7 +1984,7 @@ void CPhysicsObject::ApplyShadowControl( ShadowControl_t &control, float flSecon
 	const float flScale = ( 1.0f / flTimestep ) * flFraction;
 	const b3Vec3 velocity = ComputeControlVelocity( GetCoreVelocity(), delta, control.m_flMaxSpeed, control.m_flMaxDampSpeed, flScale, control.m_flDampFactor, &control.m_LastImpulse );
 	SetCoreVelocity( velocity );
-	control.m_LastPosition = { origin.x + real_t( flTimestep * velocity.x ), origin.y + real_t( flTimestep * velocity.y ), origin.z + real_t( flTimestep * velocity.z ) };
+	control.m_LastPosition = { origin.x + static_cast<double>( flTimestep * velocity.x ), origin.y + static_cast<double>( flTimestep * velocity.y ), origin.z + static_cast<double>( flTimestep * velocity.z ) };
 
 	const b3Vec3 rotationDelta = GetRotationDelta( m_NextRotation, control.m_TargetRotation );
 	SetCoreAngularVelocity( ComputeControlVelocity( GetCoreAngularVelocity(), rotationDelta, control.m_flMaxAngular, control.m_flMaxDampAngular, flScale, control.m_flDampFactor, nullptr ) );
@@ -2008,7 +1993,7 @@ void CPhysicsObject::ApplyShadowControl( ShadowControl_t &control, float flSecon
 float CPhysicsObject::ComputeShadowControl( const hlshadowcontrol_params_t &params, float secondsToArrival, float dt )
 {
 	ShadowControl_t control;
-	control.m_TargetPosition = ToReal( SourceToIVP( params.targetPosition ) );
+	control.m_TargetPosition = ToDouble( SourceToIVP( params.targetPosition ) );
 	control.m_TargetRotation = AnglesToIVP( params.targetRotation );
 	control.m_flMaxSpeed = params.maxSpeed * SOURCE_TO_IVP;
 	control.m_flMaxDampSpeed = params.maxDampSpeed * SOURCE_TO_IVP;

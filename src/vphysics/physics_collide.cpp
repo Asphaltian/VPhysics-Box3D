@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cfloat>
 #include <cmath>
 #include <cstring>
@@ -530,7 +529,7 @@ static std::unique_ptr<CollideMesh_t> CreateStaticMesh( const std::vector<std::u
 	PointTable_t table( 3 * triangles.size() );
 	auto findCluster = [&]( b3Vec3 point, b3Vec3 normal ) {
 		point = { point.x + 0.0f, point.y + 0.0f, point.z + 0.0f };
-		const auto [nPoint, bInserted] = table.FindOrInsert( std::bit_cast<PointTable_t::Key_t>( point ), static_cast<uint32_t>( points.size() ), [&]( uint32_t nIndex ) { return std::bit_cast<PointTable_t::Key_t>( points[nIndex] ); } );
+		const auto [nPoint, bInserted] = table.FindOrInsert( BitCast<PointTable_t::Key_t>( point ), static_cast<uint32_t>( points.size() ), [&]( uint32_t nIndex ) { return BitCast<PointTable_t::Key_t>( points[nIndex] ); } );
 		if ( bInserted )
 		{
 			points.push_back( point );
@@ -546,7 +545,7 @@ static std::unique_ptr<CollideMesh_t> CreateStaticMesh( const std::vector<std::u
 			}
 		}
 
-		clusters.push_back( { normal, normal, static_cast<int>( nPoint ), heads[nPoint] } );
+		clusters.push_back( Cluster_t{ normal, normal, static_cast<int>( nPoint ), heads[nPoint] } );
 		heads[nPoint] = static_cast<int>( clusters.size() ) - 1;
 		return heads[nPoint];
 	};
@@ -1043,7 +1042,7 @@ void CPhysCollideCompactSurface::Serialize( char *pDest, bool bSwap ) const
 		collideHeader.modelType = static_cast<short>( ByteSwap( static_cast<uint16_t>( collideHeader.modelType ) ) );
 		surfaceHeader.surfaceSize = static_cast<int>( ByteSwap( static_cast<uint32_t>( surfaceHeader.surfaceSize ) ) );
 		for ( int i = 0; i < 3; ++i )
-			surfaceHeader.dragAxisAreas[i] = std::bit_cast<float>( ByteSwap( std::bit_cast<uint32_t>( surfaceHeader.dragAxisAreas[i] ) ) );
+			surfaceHeader.dragAxisAreas[i] = BitCast<float>( ByteSwap( BitCast<uint32_t>( surfaceHeader.dragAxisAreas[i] ) ) );
 	}
 
 	std::memcpy( pDest, &collideHeader, sizeof( collideHeader ) );

@@ -32,7 +32,7 @@ public:
 	bool m_bHasTriangles = false;
 };
 
-static CPhysConvex *CreateConvexFromPoints( const std::vector<RealVec3_t> &points )
+static CPhysConvex *CreateConvexFromPoints( const std::vector<DoubleVec3_t> &points )
 {
 	std::vector<unsigned char> ledge = BuildPointSoupLedge( points );
 	if ( ledge.empty() )
@@ -43,15 +43,15 @@ static CPhysConvex *CreateConvexFromPoints( const std::vector<RealVec3_t> &point
 	for ( int nTriangle = 0; nTriangle < GetLedgeTriangleCount( pLedge ); ++nTriangle )
 	{
 		const unsigned char *pTriangle = GetLedgeTriangle( pLedge, nTriangle );
-		const RealVec3_t a = ToReal( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 0 ) ) ) );
-		const RealVec3_t b = ToReal( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 1 ) ) ) );
-		const RealVec3_t c = ToReal( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 2 ) ) ) );
+		const DoubleVec3_t a = ToDouble( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 0 ) ) ) );
+		const DoubleVec3_t b = ToDouble( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 1 ) ) ) );
+		const DoubleVec3_t c = ToDouble( LoadPoint( GetLedgePoint( pLedge, GetEdgeStartPoint( pTriangle, 2 ) ) ) );
 
-		const RealVec3_t normal = Cross( c - a, b - a );
-		const real_t flLength = Length( normal );
+		const DoubleVec3_t normal = Cross( c - a, b - a );
+		const double flLength = Length( normal );
 		if ( static_cast<float>( flLength ) > PLANE_NORMAL_MINIMUM_LENGTH )
 		{
-			const real_t flInverse = 1 / flLength;
+			const double flInverse = 1 / flLength;
 			planes.AddPlane( flInverse * normal, flInverse * -Dot( normal, a ) );
 		}
 	}
@@ -158,9 +158,9 @@ CPhysicsCollision::~CPhysicsCollision()
 
 CPhysConvex *CPhysicsCollision::ConvexFromVerts( Vector **pVerts, int vertCount )
 {
-	std::vector<RealVec3_t> points( std::max( vertCount, 0 ) );
+	std::vector<DoubleVec3_t> points( std::max( vertCount, 0 ) );
 	for ( int i = 0; i < vertCount; ++i )
-		points[i] = ToReal( SourceToIVP( *pVerts[i] ) );
+		points[i] = ToDouble( SourceToIVP( *pVerts[i] ) );
 
 	return CreateConvexFromPoints( points );
 }
@@ -200,15 +200,15 @@ void CPhysicsCollision::ConvexFree( CPhysConvex *pConvex )
 
 CPhysConvex *CPhysicsCollision::BBoxToConvex( const Vector &mins, const Vector &maxs )
 {
-	const std::vector<RealVec3_t> corners = {
-		ToReal( SourceToIVP( Vector( mins.x, mins.y, mins.z ) ) ),
-		ToReal( SourceToIVP( Vector( maxs.x, mins.y, mins.z ) ) ),
-		ToReal( SourceToIVP( Vector( mins.x, maxs.y, mins.z ) ) ),
-		ToReal( SourceToIVP( Vector( maxs.x, maxs.y, mins.z ) ) ),
-		ToReal( SourceToIVP( Vector( mins.x, mins.y, maxs.z ) ) ),
-		ToReal( SourceToIVP( Vector( maxs.x, mins.y, maxs.z ) ) ),
-		ToReal( SourceToIVP( Vector( mins.x, maxs.y, maxs.z ) ) ),
-		ToReal( SourceToIVP( Vector( maxs.x, maxs.y, maxs.z ) ) ),
+	const std::vector<DoubleVec3_t> corners = {
+		ToDouble( SourceToIVP( Vector( mins.x, mins.y, mins.z ) ) ),
+		ToDouble( SourceToIVP( Vector( maxs.x, mins.y, mins.z ) ) ),
+		ToDouble( SourceToIVP( Vector( mins.x, maxs.y, mins.z ) ) ),
+		ToDouble( SourceToIVP( Vector( maxs.x, maxs.y, mins.z ) ) ),
+		ToDouble( SourceToIVP( Vector( mins.x, mins.y, maxs.z ) ) ),
+		ToDouble( SourceToIVP( Vector( maxs.x, mins.y, maxs.z ) ) ),
+		ToDouble( SourceToIVP( Vector( mins.x, maxs.y, maxs.z ) ) ),
+		ToDouble( SourceToIVP( Vector( maxs.x, maxs.y, maxs.z ) ) ),
 	};
 
 	std::vector<unsigned char> ledge = BuildPointSoupLedge( corners );
@@ -261,7 +261,7 @@ void CPhysicsCollision::PolysoupAddTriangle( CPhysPolysoup *pSoup, const Vector 
 {
 	pSoup->m_bHasTriangles = true;
 
-	std::vector<unsigned char> ledge = WriteTriangleLedge( ToReal( SourceToIVP( a ) ), ToReal( SourceToIVP( b ) ), ToReal( SourceToIVP( c ) ) );
+	std::vector<unsigned char> ledge = WriteTriangleLedge( ToDouble( SourceToIVP( a ) ), ToDouble( SourceToIVP( b ) ), ToDouble( SourceToIVP( c ) ) );
 	if ( ledge.empty() )
 	{
 		Warning( "Degenerate Triangle\n" );

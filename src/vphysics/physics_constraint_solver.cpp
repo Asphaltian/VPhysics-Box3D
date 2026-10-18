@@ -19,7 +19,7 @@ static constexpr float ARC_TANGENT_C1 = 0.16591105f;
 static constexpr float ARC_TANGENT_C2 = -0.33080792f;
 static constexpr float ARC_TANGENT_C3 = 0.99995309f;
 
-static FloatMatrix_t ToFloat( const RealMatrix3_t &rotation )
+static FloatMatrix_t ToFloat( const DoubleMatrix3_t &rotation )
 {
 	FloatMatrix_t matrix;
 	for ( int i = 0; i < 3; ++i )
@@ -94,7 +94,7 @@ static float FastArcTangent( float x, float y )
 	return flAngle + ( y < 0.0f ? std::copysign( PI, x ) : 0.0f );
 }
 
-static b3Vec3 GetAnchorPoint( const RealMatrix3_t &rotation, RealVec3_t position, b3Vec3 shift, b3Vec3 anchor )
+static b3Vec3 GetAnchorPoint( const DoubleMatrix3_t &rotation, DoubleVec3_t position, b3Vec3 shift, b3Vec3 anchor )
 {
 	return ToFloat( Rotate( rotation, anchor ) + ( Rotate( rotation, shift ) + position ) );
 }
@@ -129,8 +129,8 @@ float CPulleySolver::MeasureError( const b3Vec3 points[2], b3Vec3 directions[2] 
 
 bool CPulleySolver::IsSlackAhead( ConstraintBody_t bodies[2], const ConstraintStep_t &step ) const
 {
-	RealMatrix3_t rotations[2];
-	RealVec3_t positions[2];
+	DoubleMatrix3_t rotations[2];
+	DoubleVec3_t positions[2];
 	b3Vec3 points[2];
 	for ( int i = 0; i < 2; ++i )
 	{
@@ -145,11 +145,11 @@ bool CPulleySolver::IsSlackAhead( ConstraintBody_t bodies[2], const ConstraintSt
 			flLengthSquared = ( d.x * d.x + d.y * d.y ) + d.z * d.z;
 		}
 
-		const RealQuat_t delta = { d.x, d.y, d.z, std::sqrt( 1.0f - flLengthSquared ) };
+		const DoubleQuat_t delta = { d.x, d.y, d.z, std::sqrt( 1.0f - flLengthSquared ) };
 		rotations[i] = QuatToMatrix( NormalizeQuat( MultiplyQuat( pObject->GetNextRotation(), delta ) ) );
 		const b3Vec3 s = pObject->GetCoreVelocity();
-		const RealVec3_t position = pObject->GetCorePosition();
-		const real_t dt = step.m_flTimestep;
+		const DoubleVec3_t position = pObject->GetCorePosition();
+		const double dt = step.m_flTimestep;
 		positions[i] = { dt * s.x + position.x, dt * s.y + position.y, dt * s.z + position.z };
 		points[i] = GetAnchorPoint( rotations[i], positions[i], pObject->GetShift(), m_Anchors[i] );
 	}
@@ -174,8 +174,8 @@ void CPulleySolver::Apply( ConstraintBody_t bodies[2], float flImpulse ) const
 
 void CPulleySolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &step )
 {
-	RealMatrix3_t rotations[2];
-	RealVec3_t positions[2];
+	DoubleMatrix3_t rotations[2];
+	DoubleVec3_t positions[2];
 	b3Vec3 points[2];
 	for ( int i = 0; i < 2; ++i )
 	{
@@ -194,7 +194,7 @@ void CPulleySolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &s
 	for ( int i = 0; i < 2; ++i )
 	{
 		const FloatMatrix_t rotation = ToFloat( rotations[i] );
-		const b3Vec3 r = ToFloat( ToReal( points[i] ) - positions[i] );
+		const b3Vec3 r = ToFloat( ToDouble( points[i] ) - positions[i] );
 		const b3Vec3 n = m_Linear[i];
 		const b3Vec3 x = { n.z * r.y - n.y * r.z, n.x * r.z - n.z * r.x, n.y * r.x - n.x * r.y };
 		const auto &m = rotation.m;

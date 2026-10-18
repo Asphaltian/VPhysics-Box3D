@@ -117,12 +117,12 @@ void VectorTransform( const float *in1, const matrix3x4_t &in2, float *out )
 		out[i] = ( ( in1[0] * in2[i][0] + in1[1] * in2[i][1] ) + in1[2] * in2[i][2] ) + in2[i][3];
 }
 
-RealQuat_t AnglesToIVP( const QAngle &angles )
+DoubleQuat_t AnglesToIVP( const QAngle &angles )
 {
 	b3Vec3 forward, right, up;
 	AngleVectors( angles, forward, right, up );
 
-	const RealMatrix3_t rotation = { {
+	const DoubleMatrix3_t rotation = { {
 		{ forward.x, -up.x, -right.x },
 		{ -forward.z, up.z, right.z },
 		{ forward.y, -up.y, -right.y },
@@ -130,18 +130,18 @@ RealQuat_t AnglesToIVP( const QAngle &angles )
 	return MatrixToQuat( rotation );
 }
 
-RealQuat_t MatrixToIVP( const matrix3x4_t &matrix, RealVec3_t &origin )
+DoubleQuat_t MatrixToIVP( const matrix3x4_t &matrix, DoubleVec3_t &origin )
 {
-	const RealMatrix3_t rotation = { {
+	const DoubleMatrix3_t rotation = { {
 		{ matrix[0][0], -matrix[0][2], matrix[0][1] },
 		{ -matrix[2][0], matrix[2][2], -matrix[2][1] },
 		{ matrix[1][0], -matrix[1][2], matrix[1][1] },
 	} };
-	origin = ToReal( SourceToIVP( b3Vec3{ matrix[0][3], matrix[1][3], matrix[2][3] } ) );
+	origin = ToDouble( SourceToIVP( b3Vec3{ matrix[0][3], matrix[1][3], matrix[2][3] } ) );
 	return MatrixToQuat( rotation );
 }
 
-QAngle IVPToAngles( const RealMatrix3_t &rotation )
+QAngle IVPToAngles( const DoubleMatrix3_t &rotation )
 {
 	float m[3][3];
 	for ( int i = 0; i < 3; ++i )
@@ -166,7 +166,7 @@ QAngle IVPToAngles( const RealMatrix3_t &rotation )
 	return angles;
 }
 
-void IVPToMatrix( const RealMatrix3_t &rotation, RealVec3_t origin, matrix3x4_t &matrix )
+void IVPToMatrix( const DoubleMatrix3_t &rotation, DoubleVec3_t origin, matrix3x4_t &matrix )
 {
 	const auto m = [&]( int i, int j ) { return static_cast<float>( rotation.m[i][j] ); };
 	matrix[0][0] = m( 0, 0 );
@@ -178,9 +178,9 @@ void IVPToMatrix( const RealMatrix3_t &rotation, RealVec3_t origin, matrix3x4_t 
 	matrix[2][0] = -m( 1, 0 );
 	matrix[2][1] = -m( 1, 2 );
 	matrix[2][2] = m( 1, 1 );
-	matrix[0][3] = static_cast<float>( real_t( IVP_TO_SOURCE ) * origin.x );
-	matrix[1][3] = static_cast<float>( real_t( IVP_TO_SOURCE ) * origin.z );
-	matrix[2][3] = -static_cast<float>( real_t( IVP_TO_SOURCE ) * origin.y );
+	matrix[0][3] = static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * origin.x );
+	matrix[1][3] = static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * origin.z );
+	matrix[2][3] = -static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * origin.y );
 }
 
 QAngle MatrixAngles( const matrix3x4_t &matrix )

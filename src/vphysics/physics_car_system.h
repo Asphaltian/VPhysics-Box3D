@@ -6,7 +6,7 @@
 #include "vphysics/vehicles.h"
 #include "tier0/valve_minmax_off.h"
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 
 #include "box3d/id.h"
 #include "box3d/math_functions.h"
@@ -40,7 +40,7 @@ struct CarSystemDebugData_t
 {
 	b3Vec3 m_WheelRaycasts[VEHICLE_DEBUGRENDERDATA_MAX_WHEELS][2];
 	float m_WheelRaycastFractions[VEHICLE_DEBUGRENDERDATA_MAX_WHEELS];
-	RealVec3_t m_AxlePositions[VEHICLE_DEBUGRENDERDATA_MAX_AXLES];
+	DoubleVec3_t m_AxlePositions[VEHICLE_DEBUGRENDERDATA_MAX_AXLES];
 };
 
 class CCarSystem
@@ -146,7 +146,7 @@ public:
 	static constexpr int PRIORITY = 1500;
 
 	CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, b3Vec3 targetAnchor, float flForce );
-	CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, RealVec3_t worldTarget, float flForce );
+	CForceActuator( CPhysicsObject *pObject, b3Vec3 anchor, DoubleVec3_t worldTarget, float flForce );
 	~CForceActuator() override;
 
 	int GetPriority() const override { return PRIORITY; }
@@ -158,14 +158,14 @@ public:
 
 	void SetForce( float flForce );
 
-	RealVec3_t GetAnchorPosition() const;
-	RealVec3_t GetTargetPosition() const;
+	DoubleVec3_t GetAnchorPosition() const;
+	DoubleVec3_t GetTargetPosition() const;
 
 private:
 	CPhysicsObject *m_pObject;
 	b3Vec3 m_Anchor;
 	b3Vec3 m_TargetAnchor = b3Vec3_zero;
-	RealVec3_t m_WorldTarget = {};
+	DoubleVec3_t m_WorldTarget = {};
 	float m_flForce;
 	bool m_bWorldTarget;
 };
@@ -325,11 +325,11 @@ private:
 
 	struct Impact_t
 	{
-		RealVec3_t m_Start;
+		DoubleVec3_t m_Start;
 		b3Vec3 m_Direction;
-		RealVec3_t m_HitPoint;
+		DoubleVec3_t m_HitPoint;
 		b3Vec3 m_Normal;
-		RealVec3_t m_ContactPoint;
+		DoubleVec3_t m_ContactPoint;
 		b3Vec3 m_ContactVelocity;
 		b3Vec3 m_TangentVelocity;
 		float m_flHitLength;

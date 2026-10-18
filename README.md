@@ -31,20 +31,26 @@ For discussions, please join the Discord server [here](https://discord.gg/rbCJdZ
 
 ## Platforms
 
+One build works for both Garry's Mod and Source SDK 2013 Multiplayer games, just pick the preset for your platform.
+
 | Preset | Builds | Tested |
 |:--|:--:|:--:|
-| `gmod-windows-x64` | ✔️ | ✔️ |
-| `gmod-linux-x64` | ✔️ |  |
-| `sdk2013-windows-x64` | ✔️ |  |
-| `sdk2013-linux-x64` | ✔️ |  |
+| `windows-x64` | ✔️ | ✔️ |
+| `windows-x86` | ✔️ | ✔️ |
+| `linux-x64` | ✔️ |  |
+| `linux-x86` | ✔️ |  |
+| `dedicated-linux-x64` | ✔️ |  |
+| `dedicated-linux-x86` | ✔️ | ✔️ |
+
+Windows dedicated servers load the same `vphysics.dll` as the game, so they use the Windows presets.
 
 ## Building
 
 You'll need:
 
 * **CMake** 3.25 or newer
-* **Windows:** Visual Studio 2026 with the **Desktop development with C++** workload
-* **Linux:** Ninja and GCC 14
+* **Windows:** Visual Studio 2026 with the **Desktop development with C++** workload, plus **C++ Clang tools for Windows** for `windows-x86`
+* **Linux:** Podman or Docker
 
 Clone the repository with its submodules:
 
@@ -53,21 +59,32 @@ git clone --recursive https://github.com/Asphaltian/VPhysics-Box3D.git
 cd VPhysics-Box3D
 ```
 
-Then configure and build the preset for your game, for example:
+On Windows, configure and build the preset for your platform:
 
 ```
-cmake --preset gmod-windows-x64
-cmake --build --preset gmod-windows-x64-release
+cmake --preset windows-x64
+cmake --build --preset windows-x64-release
 ```
 
-The library ends up in `build/<preset>/src/Release/`, as `vphysics.dll` on Windows and `vphysics.so` on Linux. Swap `-release` for `-debug` if you need a debug build.
+Linux builds are made inside Valve's Steam Runtime SDK, the same environment the games themselves are built in:
+
+```
+podman run --rm -v "$PWD":/src -w /src registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest \
+	sh -c "cmake --preset linux-x86 && cmake --build --preset linux-x86-release"
+```
+
+The library ends up in `build/<preset>/src/Release/`. Swap `-release` for `-debug` if you need a debug build.
 
 ## Installing
 
 Replace the game's own `vphysics` library with the one you built:
 
-* **Garry's Mod:** `GarrysMod/bin/win64` or `GarrysMod/bin/linux64`
-* **Source SDK Base 2013 Multiplayer:** `bin/x64` or `bin/linux64`
+| Game | Windows | Linux |
+|:--|:--|:--|
+| Garry's Mod | `bin/win64/vphysics.dll` (x64), `bin/vphysics.dll` (x86) | `bin/vphysics.so` |
+| Garry's Mod Dedicated Server | `bin/win64/vphysics.dll` (x64), `bin/vphysics.dll` (x86) | `bin/vphysics_srv.so` |
+| Source SDK Base 2013 Multiplayer | `bin/x64/vphysics.dll` (x64), `bin/vphysics.dll` (x86) | `bin/linux64/vphysics.so` (x64), `bin/vphysics.so` (x86) |
+| Source SDK Base 2013 Dedicated Server | `bin/x64/vphysics.dll` (x64), `bin/vphysics.dll` (x86) | `bin/linux64/vphysics_srv.so` (x64), `bin/vphysics_srv.so` (x86) |
 
 Keep in mind that Steam puts the original back whenever it verifies or updates the game files, so back it up and copy yours over again afterwards.
 

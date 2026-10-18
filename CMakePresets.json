@@ -7,11 +7,10 @@
 			"binaryDir": "${sourceDir}/build/${presetName}"
 		},
 		{
-			"name": "windows-x64",
+			"name": "windows",
 			"hidden": true,
 			"inherits": "base",
 			"generator": "Visual Studio 18 2026",
-			"architecture": "x64",
 			"condition": {
 				"type": "equals",
 				"lhs": "${hostSystemName}",
@@ -19,10 +18,14 @@
 			}
 		},
 		{
-			"name": "linux-x64",
+			"name": "linux",
 			"hidden": true,
 			"inherits": "base",
 			"generator": "Ninja Multi-Config",
+			"cacheVariables": {
+				"CMAKE_C_COMPILER": "gcc-10",
+				"CMAKE_CXX_COMPILER": "g++-10"
+			},
 			"condition": {
 				"type": "equals",
 				"lhs": "${hostSystemName}",
@@ -30,38 +33,59 @@
 			}
 		},
 		{
-			"name": "sdk2013-windows-x64",
-			"displayName": "Source SDK 2013 (Windows x64)",
-			"inherits": "windows-x64",
-			"cacheVariables": { "VPHYSICS_GAME": "sdk2013" }
+			"name": "dedicated",
+			"hidden": true,
+			"cacheVariables": { "VPHYSICS_DEDICATED": "ON" }
 		},
 		{
-			"name": "gmod-windows-x64",
-			"displayName": "Garry's Mod (Windows x64)",
-			"inherits": "windows-x64",
-			"cacheVariables": { "VPHYSICS_GAME": "gmod" }
+			"name": "windows-x64",
+			"displayName": "Windows x64",
+			"inherits": "windows",
+			"architecture": "x64"
 		},
 		{
-			"name": "sdk2013-linux-x64",
-			"displayName": "Source SDK 2013 (Linux x64)",
-			"inherits": "linux-x64",
-			"cacheVariables": { "VPHYSICS_GAME": "sdk2013" }
+			"name": "windows-x86",
+			"displayName": "Windows x86",
+			"inherits": "windows",
+			"architecture": "Win32"
 		},
 		{
-			"name": "gmod-linux-x64",
-			"displayName": "Garry's Mod (Linux x64)",
-			"inherits": "linux-x64",
-			"cacheVariables": { "VPHYSICS_GAME": "gmod" }
+			"name": "linux-x64",
+			"displayName": "Linux x64",
+			"inherits": "linux"
+		},
+		{
+			"name": "linux-x86",
+			"displayName": "Linux x86",
+			"inherits": "linux",
+			"cacheVariables": {
+				"CMAKE_C_FLAGS": "-m32 -march=pentium4 -mtune=core2 -msse2 -mfpmath=sse",
+				"CMAKE_CXX_FLAGS": "-m32 -march=pentium4 -mtune=core2 -msse2 -mfpmath=sse"
+			}
+		},
+		{
+			"name": "dedicated-linux-x64",
+			"displayName": "Dedicated Server (Linux x64)",
+			"inherits": [ "linux-x64", "dedicated" ]
+		},
+		{
+			"name": "dedicated-linux-x86",
+			"displayName": "Dedicated Server (Linux x86)",
+			"inherits": [ "linux-x86", "dedicated" ]
 		}
 	],
 	"buildPresets": [
-		{ "name": "sdk2013-windows-x64-release", "configurePreset": "sdk2013-windows-x64", "configuration": "Release" },
-		{ "name": "sdk2013-windows-x64-debug", "configurePreset": "sdk2013-windows-x64", "configuration": "Debug" },
-		{ "name": "gmod-windows-x64-release", "configurePreset": "gmod-windows-x64", "configuration": "Release" },
-		{ "name": "gmod-windows-x64-debug", "configurePreset": "gmod-windows-x64", "configuration": "Debug" },
-		{ "name": "sdk2013-linux-x64-release", "configurePreset": "sdk2013-linux-x64", "configuration": "Release" },
-		{ "name": "sdk2013-linux-x64-debug", "configurePreset": "sdk2013-linux-x64", "configuration": "Debug" },
-		{ "name": "gmod-linux-x64-release", "configurePreset": "gmod-linux-x64", "configuration": "Release" },
-		{ "name": "gmod-linux-x64-debug", "configurePreset": "gmod-linux-x64", "configuration": "Debug" }
+		{ "name": "windows-x64-release", "configurePreset": "windows-x64", "configuration": "Release" },
+		{ "name": "windows-x64-debug", "configurePreset": "windows-x64", "configuration": "Debug" },
+		{ "name": "windows-x86-release", "configurePreset": "windows-x86", "configuration": "Release" },
+		{ "name": "windows-x86-debug", "configurePreset": "windows-x86", "configuration": "Debug" },
+		{ "name": "linux-x64-release", "configurePreset": "linux-x64", "configuration": "Release" },
+		{ "name": "linux-x64-debug", "configurePreset": "linux-x64", "configuration": "Debug" },
+		{ "name": "linux-x86-release", "configurePreset": "linux-x86", "configuration": "Release" },
+		{ "name": "linux-x86-debug", "configurePreset": "linux-x86", "configuration": "Debug" },
+		{ "name": "dedicated-linux-x64-release", "configurePreset": "dedicated-linux-x64", "configuration": "Release" },
+		{ "name": "dedicated-linux-x64-debug", "configurePreset": "dedicated-linux-x64", "configuration": "Debug" },
+		{ "name": "dedicated-linux-x86-release", "configurePreset": "dedicated-linux-x86", "configuration": "Release" },
+		{ "name": "dedicated-linux-x86-debug", "configurePreset": "dedicated-linux-x86", "configuration": "Debug" }
 	]
 }

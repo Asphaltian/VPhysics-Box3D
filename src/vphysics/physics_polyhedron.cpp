@@ -68,15 +68,15 @@ CPolyhedron *GetTempPolyhedron( unsigned short iVertices, unsigned short iLines,
 
 CPhysConvex *CreateTriangleConvex( const Vector &a, const Vector &b, const Vector &c )
 {
-	std::vector<unsigned char> ledge = WriteTriangleLedge( ToReal( SourceToIVP( a ) ), ToReal( SourceToIVP( b ) ), ToReal( SourceToIVP( c ) ) );
+	std::vector<unsigned char> ledge = WriteTriangleLedge( ToDouble( SourceToIVP( a ) ), ToDouble( SourceToIVP( b ) ), ToDouble( SourceToIVP( c ) ) );
 	return ledge.empty() ? nullptr : CreateConvexFromLedge( std::move( ledge ) );
 }
 
 CPhysConvex *CreateConvexFromPolyhedron( const CPolyhedron &polyhedron )
 {
-	std::vector<RealVec3_t> templatePoints( polyhedron.iVertexCount );
+	std::vector<DoubleVec3_t> templatePoints( polyhedron.iVertexCount );
 	for ( int i = 0; i < polyhedron.iVertexCount; ++i )
-		templatePoints[i] = ToReal( SourceToIVP( polyhedron.pVertices[i] ) );
+		templatePoints[i] = ToDouble( SourceToIVP( polyhedron.pVertices[i] ) );
 
 	CTemplatePolygon templatePolygon( templatePoints );
 	std::vector<TemplateLine_t> lines;
@@ -84,7 +84,7 @@ CPhysConvex *CreateConvexFromPolyhedron( const CPolyhedron &polyhedron )
 	for ( int nPolygon = 0; nPolygon < polyhedron.iPolygonCount; ++nPolygon )
 	{
 		const Polyhedron_IndexedPolygon_t &polygon = polyhedron.pPolygons[nPolygon];
-		const RealVec3_t normal = ToReal( SourceToIVP( polygon.polyNormal ) );
+		const DoubleVec3_t normal = ToDouble( SourceToIVP( polygon.polyNormal ) );
 
 		lines.clear();
 		for ( int i = 0; i < polygon.iIndexCount; ++i )

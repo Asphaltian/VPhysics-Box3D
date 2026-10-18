@@ -43,6 +43,12 @@ IPhysicsEnvironment *CPhysics::GetActiveEnvironmentByIndex( int index )
 	return m_Environments[index];
 }
 
+void CPhysics::UpdateWorldMaterials()
+{
+	for ( CPhysicsEnvironment *pEnvironment : m_Environments )
+		pEnvironment->UpdateWorldMaterials();
+}
+
 IPhysicsObjectPairHash *CPhysics::CreateObjectPairHash()
 {
 	return new CPhysicsObjectPairHash;

@@ -213,6 +213,7 @@ public:
 	}
 
 	void ResetShapeProxies();
+	void UpdateWorldMaterials();
 
 	void CapturePreStepVelocity( uint32_t nStepCount );
 
@@ -287,6 +288,10 @@ public:
 	FrictionContact_t *GetFrictionHead() const { return m_pFrictionHead; }
 
 	void SetFrictionHead( FrictionContact_t *pFriction ) { m_pFrictionHead = pFriction; }
+
+	uint32_t GetPlacedStep() const { return m_nPlacedStep; }
+
+	void SetPlacedStep( uint32_t nStep ) { m_nPlacedStep = nStep; }
 
 	void ResetControllerCursor() { m_nControllerCursor = static_cast<int>( m_ControllerOrder.size() ) - 1; }
 
@@ -388,6 +393,7 @@ private:
 	CPhysicsEnvironment *m_pEnvironment;
 	b3BodyId m_Body = b3_nullBodyId;
 	uint32_t m_nId = 0;
+	uint32_t m_nPlacedStep = 0;
 	b3AABB m_FilterBounds = {};
 	std::vector<IController *> m_Controllers;
 	std::vector<IController *> m_ControllerOrder;

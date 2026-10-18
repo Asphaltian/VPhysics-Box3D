@@ -1,6 +1,7 @@
 #include "physics_surface_props.h"
 
 #include "parse_file.h"
+#include "physics.h"
 
 #include <algorithm>
 #include <cctype>
@@ -290,6 +291,8 @@ void CPhysicsSurfaceProps::SetWorldMaterialIndexTable( int *pMapArray, int mapSi
 	const int nCount = std::min( mapSize, MAX_MATERIAL_INDEX );
 	for ( int i = 0; i < nCount; ++i )
 		m_WorldMaterialIndices[i] = static_cast<unsigned short>( pMapArray[i] );
+
+	g_Physics.UpdateWorldMaterials();
 }
 
 int CPhysicsSurfaceProps::GetWorldMaterialIndex( int nMaterial ) const

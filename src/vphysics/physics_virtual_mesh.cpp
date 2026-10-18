@@ -20,7 +20,7 @@ static std::vector<unsigned char> BuildHullSurface( const virtualmeshlist_t &lis
 	for ( int nTriangle = nFirstIndex / 3; nTriangle < ( nFirstIndex + nIndexCount ) / 3; ++nTriangle )
 	{
 		const unsigned short *pIndices = &list.indices[nTriangle * 3];
-		std::vector<unsigned char> ledge = WriteTriangleLedge( ToReal( SourceToIVP( list.pVerts[pIndices[0]] ) ), ToReal( SourceToIVP( list.pVerts[pIndices[1]] ) ), ToReal( SourceToIVP( list.pVerts[pIndices[2]] ) ) );
+		std::vector<unsigned char> ledge = WriteTriangleLedge( ToDouble( SourceToIVP( list.pVerts[pIndices[0]] ) ), ToDouble( SourceToIVP( list.pVerts[pIndices[1]] ) ), ToDouble( SourceToIVP( list.pVerts[pIndices[2]] ) ) );
 		if ( !ledge.empty() )
 			ledges.push_back( std::move( ledge ) );
 	}
@@ -275,7 +275,7 @@ const std::vector<std::unique_ptr<CPhysConvex>> &CPhysCollideVirtualMesh::GetCon
 	for ( int nTriangle = 0; nTriangle < pList->triangleCount; ++nTriangle )
 	{
 		const unsigned short *pIndices = &pList->indices[nTriangle * 3];
-		const std::vector<RealVec3_t> points = { ToReal( SourceToIVP( pList->pVerts[pIndices[0]] ) ), ToReal( SourceToIVP( pList->pVerts[pIndices[1]] ) ), ToReal( SourceToIVP( pList->pVerts[pIndices[2]] ) ) };
+		const std::vector<DoubleVec3_t> points = { ToDouble( SourceToIVP( pList->pVerts[pIndices[0]] ) ), ToDouble( SourceToIVP( pList->pVerts[pIndices[1]] ) ), ToDouble( SourceToIVP( pList->pVerts[pIndices[2]] ) ) };
 		if ( CPhysConvex *pConvex = CreateConvexFromLedge( WriteCompactLedge( points, { { 0, 1, 2 }, { 0, 2, 1 } } ) ) )
 			m_Convexes.emplace_back( pConvex );
 	}

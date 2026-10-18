@@ -253,7 +253,7 @@ Vector CPhysicsEnvironment::GetGravityVector() const
 
 void CPhysicsEnvironment::SetGravity( const Vector &gravityVector )
 {
-	m_IVPGravity = ToReal( SourceToIVP( gravityVector ) );
+	m_IVPGravity = ToDouble( SourceToIVP( gravityVector ) );
 	b3World_SetGravity( m_World, ToBox3D( GetGravityVector() ) );
 	UpdateContactTuning();
 	DevMsg( 1, "Set Gravity %.1f (%.3f tolerance)\n", gravityVector.Length(), COLLISION_TOLERANCE * IVP_TO_SOURCE );
@@ -913,11 +913,7 @@ void CPhysicsEnvironment::RemoveActiveObject( CPhysicsObject *pObject )
 void CPhysicsEnvironment::SetSimulationTimestep( float timestep )
 {
 	m_flTimestep = timestep;
-#if defined( VPHYSICS_GMOD )
 	m_flInverseTimestep = static_cast<float>( 1.0 / static_cast<double>( timestep ) );
-#else
-	m_flInverseTimestep = 1.0f / timestep;
-#endif
 	UpdateContactTuning();
 }
 

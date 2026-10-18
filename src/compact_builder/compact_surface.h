@@ -1,6 +1,6 @@
 #pragma once
 
-#include "precision.h"
+#include "math_util.h"
 
 #include <algorithm>
 #include <array>
@@ -188,8 +188,8 @@ inline bool ContainsRange( const std::vector<unsigned char> &bytes, size_t nOffs
 	return ContainsRange( bytes.size(), nOffset, nSize );
 }
 
-std::vector<unsigned char> WriteCompactLedge( const std::vector<RealVec3_t> &points, const std::vector<std::array<int, 3>> &triangles );
-std::vector<unsigned char> WriteTriangleLedge( RealVec3_t a, RealVec3_t b, RealVec3_t c );
+std::vector<unsigned char> WriteCompactLedge( const std::vector<DoubleVec3_t> &points, const std::vector<std::array<int, 3>> &triangles );
+std::vector<unsigned char> WriteTriangleLedge( DoubleVec3_t a, DoubleVec3_t b, DoubleVec3_t c );
 
 void SwapCompactSurfaceToBigEndian( std::vector<unsigned char> &surface );
 bool SwapCompactSurfaceFromBigEndian( std::vector<unsigned char> &surface );

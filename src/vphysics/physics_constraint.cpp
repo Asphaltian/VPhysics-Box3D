@@ -97,10 +97,10 @@ static void RotateRagdollAxes( b3Vec3 axes[3], int nAxis, float flAngle )
 		axes[i] = rotated[i];
 }
 
-static b3Vec3 RotateRows( const RealMatrix3_t &rotation, b3Vec3 v )
+static b3Vec3 RotateRows( const DoubleMatrix3_t &rotation, b3Vec3 v )
 {
 	const auto &m = rotation.m;
-	const auto element = []( real_t x ) { return static_cast<float>( x ); };
+	const auto element = []( double x ) { return static_cast<float>( x ); };
 	return {
 		( v.y * element( m[1][0] ) + v.x * element( m[0][0] ) ) + v.z * element( m[2][0] ),
 		( v.y * element( m[1][1] ) + v.x * element( m[0][1] ) ) + v.z * element( m[2][1] ),
@@ -345,7 +345,7 @@ void CPhysicsConstraintGroup::ApplyPenetrationPairs( float flTimestep )
 	for ( int i = 0; i < m_nPenetrationPairs; ++i )
 	{
 		auto [pObject0, pObject1] = m_PenetrationPairs[i];
-		const RealVec3_t position0 = pObject0->GetCorePosition();
+		const DoubleVec3_t position0 = pObject0->GetCorePosition();
 		const b3Vec3 delta = ToFloat( pObject1->GetCorePosition() - position0 );
 		const float flLength = b3Length( delta );
 		const b3Vec3 normal = flLength <= PENETRATION_MIN_DISTANCE ? b3Vec3{ 1.0f, 0.0f, 0.0f } : b3MulSV( 1.0f / flLength, delta );
@@ -892,14 +892,14 @@ int CPhysicsConstraint::SelectTwistAxis( const b3Vec3 columns[2][3] ) const
 	b3Vec3 levers[2];
 	for ( int i = 0; i < 2; ++i )
 	{
-		const RealMatrix3_t &rotation = pObjects[i]->GetCoreRotation();
-		const RealVec3_t position = pObjects[i]->GetCorePosition();
-		const RealVec3_t anchor = Rotate( rotation, m_RagdollFrames.m_Origins[i] ) + ( Rotate( rotation, pObjects[i]->GetShift() ) + position );
+		const DoubleMatrix3_t &rotation = pObjects[i]->GetCoreRotation();
+		const DoubleVec3_t position = pObjects[i]->GetCorePosition();
+		const DoubleVec3_t anchor = Rotate( rotation, m_RagdollFrames.m_Origins[i] ) + ( Rotate( rotation, pObjects[i]->GetShift() ) + position );
 		levers[i] = ToFloat( anchor - position );
 	}
 
-	const RealMatrix3_t &referenceRotation = m_pReference->GetCoreRotation();
-	const RealMatrix3_t &attachedRotation = m_pAttached->GetCoreRotation();
+	const DoubleMatrix3_t &referenceRotation = m_pReference->GetCoreRotation();
+	const DoubleMatrix3_t &attachedRotation = m_pAttached->GetCoreRotation();
 	const b3Vec3 inverseInertia = m_pReference->GetCoreInverseInertia();
 	int nBest = 0;
 	float flBest = -1.0f;
@@ -1354,7 +1354,7 @@ static matrix3x4_t RoundTripTransform( const matrix3x4_t &matrix )
 
 static matrix3x4_t RoundTripRotation( const matrix3x4_t &matrix )
 {
-	RealMatrix3_t rotation;
+	DoubleMatrix3_t rotation;
 	for ( int i = 0; i < 3; ++i )
 	{
 		for ( int j = 0; j < 3; ++j )

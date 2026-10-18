@@ -5,7 +5,6 @@
 #include "template_polygon.h"
 #include "vector_hash.h"
 
-#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <mutex>
@@ -25,11 +24,7 @@ static constexpr double MAXIMUM_JOGGLE = static_cast<double>( 0.02f );
 static constexpr float DEGENERATE_FACET_FACTOR = 0.005f;
 static constexpr float PARALLEL_PLANE_COSINE = 0.9999f;
 
-#if defined( VPHYSICS_GMOD )
-static constexpr real_t INSIDE_TOLERANCE = -9.999999552965169e-05;
-#else
-static constexpr real_t INSIDE_TOLERANCE = -1e-4f;
-#endif
+static constexpr double INSIDE_TOLERANCE = -9.999999552965169e-05;
 
 #ifdef _WIN32
 static constexpr char NULL_DEVICE[] = "NUL";
@@ -70,17 +65,17 @@ static void FreeQhull()
 
 struct FacetPolygon_t
 {
-	RealVec3_t m_Normal;
+	DoubleVec3_t m_Normal;
 	std::vector<int> m_Vertices;
 };
 
-static int FindFarthestVertex( const std::vector<RealVec3_t> &points, const std::vector<int> &vertices, int nFrom )
+static int FindFarthestVertex( const std::vector<DoubleVec3_t> &points, const std::vector<int> &vertices, int nFrom )
 {
 	int nFarthest = -1;
-	real_t flFarthest = -1;
+	double flFarthest = -1;
 	for ( size_t i = 0; i < vertices.size(); ++i )
 	{
-		const real_t flDistance = Length( points[vertices[i]] - points[vertices[nFrom]] );
+		const double flDistance = Length( points[vertices[i]] - points[vertices[nFrom]] );
 		if ( flDistance > flFarthest )
 		{
 			flFarthest = flDistance;
@@ -90,7 +85,7 @@ static int FindFarthestVertex( const std::vector<RealVec3_t> &points, const std:
 	return nFarthest;
 }
 
-static std::vector<unsigned char> ConvertFacets( const std::vector<RealVec3_t> &points, std::vector<int> &usage, std::vector<unsigned char> &dropped )
+static std::vector<unsigned char> ConvertFacets( const std::vector<DoubleVec3_t> &points, std::vector<int> &usage, std::vector<unsigned char> &dropped )
 {
 	std::vector<FacetPolygon_t> polygons;
 	bool bFailed = false;
@@ -99,7 +94,7 @@ static std::vector<unsigned char> ConvertFacets( const std::vector<RealVec3_t> &
 	FORALLfacets
 	{
 		FacetPolygon_t polygon;
-		polygon.m_Normal = { static_cast<real_t>( facet->normal[0] ), static_cast<real_t>( facet->normal[1] ), static_cast<real_t>( facet->normal[2] ) };
+		polygon.m_Normal = { facet->normal[0], facet->normal[1], facet->normal[2] };
 
 		setT *vertices = qh_facet3vertex( facet );
 		vertexT *vertex, **vertexp;
@@ -112,13 +107,13 @@ static std::vector<unsigned char> ConvertFacets( const std::vector<RealVec3_t> &
 		qh_settempfree( &vertices );
 
 		const size_t nCount = polygon.m_Vertices.size();
-		const RealVec3_t origin = points[polygon.m_Vertices[0]];
-		real_t flWinding = 0;
-		real_t flPerimeter = 0;
+		const DoubleVec3_t origin = points[polygon.m_Vertices[0]];
+		double flWinding = 0;
+		double flPerimeter = 0;
 		for ( size_t i = 0; i < nCount; ++i )
 		{
-			const RealVec3_t current = points[polygon.m_Vertices[i]];
-			const RealVec3_t next = points[polygon.m_Vertices[( i + 1 ) % nCount]];
+			const DoubleVec3_t current = points[polygon.m_Vertices[i]];
+			const DoubleVec3_t next = points[polygon.m_Vertices[( i + 1 ) % nCount]];
 			flWinding += Dot( Cross( next - current, current - origin ), polygon.m_Normal );
 			flPerimeter += Length( current - next );
 		}
@@ -179,7 +174,7 @@ static std::vector<unsigned char> ConvertFacets( const std::vector<RealVec3_t> &
 	return WriteCompactLedge( points, templatePolygon.GetTriangles() );
 }
 
-std::vector<unsigned char> BuildPointSoupLedge( const std::vector<RealVec3_t> &input )
+std::vector<unsigned char> BuildPointSoupLedge( const std::vector<DoubleVec3_t> &input )
 {
 	if ( input.size() < 3 )
 		return {};
@@ -187,15 +182,15 @@ std::vector<unsigned char> BuildPointSoupLedge( const std::vector<RealVec3_t> &i
 	if ( input.size() == 3 )
 		return WriteTriangleLedge( input[0], input[1], input[2] );
 
-	using PointTable_t = CVectorHash<sizeof( RealVec3_t ) / sizeof( uint32_t )>;
+	using PointTable_t = CVectorHash<sizeof( DoubleVec3_t ) / sizeof( uint32_t )>;
 
-	std::vector<RealVec3_t> points;
+	std::vector<DoubleVec3_t> points;
 	points.reserve( input.size() );
 	PointTable_t seen( input.size() );
-	for ( RealVec3_t point : input )
+	for ( DoubleVec3_t point : input )
 	{
-		const auto key = std::bit_cast<PointTable_t::Key_t>( point );
-		if ( seen.FindOrInsert( key, static_cast<uint32_t>( points.size() ), [&]( uint32_t nIndex ) { return std::bit_cast<PointTable_t::Key_t>( points[nIndex] ); } ).second )
+		const auto key = BitCast<PointTable_t::Key_t>( point );
+		if ( seen.FindOrInsert( key, static_cast<uint32_t>( points.size() ), [&]( uint32_t nIndex ) { return BitCast<PointTable_t::Key_t>( points[nIndex] ); } ).second )
 			points.push_back( point );
 	}
 
@@ -208,8 +203,8 @@ std::vector<unsigned char> BuildPointSoupLedge( const std::vector<RealVec3_t> &i
 	for ( ;; )
 	{
 		coordinates.clear();
-		for ( RealVec3_t point : points )
-			coordinates.insert( coordinates.end(), { static_cast<coordT>( point.x ), static_cast<coordT>( point.y ), static_cast<coordT>( point.z ) } );
+		for ( DoubleVec3_t point : points )
+			coordinates.insert( coordinates.end(), { point.x, point.y, point.z } );
 
 		bool bBuilt = false;
 		if ( bPlain )
@@ -241,7 +236,7 @@ std::vector<unsigned char> BuildPointSoupLedge( const std::vector<RealVec3_t> &i
 			if ( !ledge.empty() )
 				return ledge;
 
-			std::vector<RealVec3_t> kept;
+			std::vector<DoubleVec3_t> kept;
 			for ( size_t i = 0; i < points.size(); ++i )
 			{
 				if ( usage[i] > 0 && !dropped[i] )
@@ -266,7 +261,7 @@ std::vector<unsigned char> BuildPointSoupLedge( const std::vector<RealVec3_t> &i
 	}
 }
 
-void CPlaneSet::AddPlane( RealVec3_t normal, real_t flDistance )
+void CPlaneSet::AddPlane( DoubleVec3_t normal, double flDistance )
 {
 	std::vector<size_t> replaced;
 	for ( size_t i = 0; i < m_Planes.size(); ++i )
@@ -285,15 +280,15 @@ void CPlaneSet::AddPlane( RealVec3_t normal, real_t flDistance )
 		m_Planes.erase( m_Planes.begin() + replaced[i] );
 }
 
-std::vector<RealVec3_t> CPlaneSet::ComputeVertices( real_t flMergeDistance ) const
+std::vector<DoubleVec3_t> CPlaneSet::ComputeVertices( double flMergeDistance ) const
 {
-	const real_t flMergeSquared = flMergeDistance * flMergeDistance;
-	auto isNear = [&]( RealVec3_t a, RealVec3_t b ) { return LengthSquared( a - b ) < flMergeSquared; };
-	auto isInside = []( const Plane_t &plane, RealVec3_t point ) {
+	const double flMergeSquared = flMergeDistance * flMergeDistance;
+	auto isNear = [&]( DoubleVec3_t a, DoubleVec3_t b ) { return LengthSquared( a - b ) < flMergeSquared; };
+	auto isInside = []( const Plane_t &plane, DoubleVec3_t point ) {
 		return ( plane.m_Normal.x * point.x + plane.m_Normal.y * point.y ) + ( plane.m_Normal.z * point.z + plane.m_flDistance ) >= INSIDE_TOLERANCE;
 	};
 
-	std::vector<RealVec3_t> vertices;
+	std::vector<DoubleVec3_t> vertices;
 	const size_t nCount = m_Planes.size();
 	size_t nRejecting = 0;
 	for ( size_t i = 0; i < nCount; ++i )
@@ -302,22 +297,22 @@ std::vector<RealVec3_t> CPlaneSet::ComputeVertices( real_t flMergeDistance ) con
 		{
 			for ( size_t k = j + 1; k < nCount; ++k )
 			{
-				const RealVec3_t a = m_Planes[i].m_Normal;
-				const RealVec3_t b = m_Planes[j].m_Normal;
-				const RealVec3_t c = m_Planes[k].m_Normal;
-				const RealVec3_t bc = Cross( b, c );
-				const RealVec3_t ca = Cross( c, a );
-				const RealVec3_t ab = Cross( a, b );
+				const DoubleVec3_t a = m_Planes[i].m_Normal;
+				const DoubleVec3_t b = m_Planes[j].m_Normal;
+				const DoubleVec3_t c = m_Planes[k].m_Normal;
+				const DoubleVec3_t bc = Cross( b, c );
+				const DoubleVec3_t ca = Cross( c, a );
+				const DoubleVec3_t ab = Cross( a, b );
 
-				const real_t flDeterminant = Dot( a, bc );
-				if ( !( REAL_RESOLUTION <= std::fabs( flDeterminant ) ) )
+				const double flDeterminant = Dot( a, bc );
+				if ( !( DOUBLE_RESOLUTION <= std::fabs( flDeterminant ) ) )
 					continue;
 
-				const real_t r = 1 / flDeterminant;
-				const real_t di = -m_Planes[i].m_flDistance;
-				const real_t dj = -m_Planes[j].m_flDistance;
-				const real_t dk = -m_Planes[k].m_flDistance;
-				const RealVec3_t point = ( di * ( r * bc ) + dj * ( r * ca ) ) + dk * ( r * ab );
+				const double r = 1 / flDeterminant;
+				const double di = -m_Planes[i].m_flDistance;
+				const double dj = -m_Planes[j].m_flDistance;
+				const double dk = -m_Planes[k].m_flDistance;
+				const DoubleVec3_t point = ( di * ( r * bc ) + dj * ( r * ca ) ) + dk * ( r * ab );
 
 				if ( !isInside( m_Planes[nRejecting], point ) )
 					continue;
@@ -337,7 +332,7 @@ std::vector<RealVec3_t> CPlaneSet::ComputeVertices( real_t flMergeDistance ) con
 					continue;
 
 				bool bMerged = false;
-				for ( RealVec3_t vertex : vertices )
+				for ( DoubleVec3_t vertex : vertices )
 				{
 					if ( isNear( point, vertex ) )
 					{

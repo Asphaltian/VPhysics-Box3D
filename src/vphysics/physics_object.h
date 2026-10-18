@@ -4,7 +4,7 @@
 #include "vphysics_interface.h"
 #include "tier0/valve_minmax_off.h"
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 
 #include "box3d/collision.h"
 #include "box3d/id.h"
@@ -266,10 +266,10 @@ public:
 	void UpdateTransform( const b3Transform &transform );
 	void ApplyPendingVelocity();
 	void FlushVelocity();
-	void ApplyImpulse( RealVec3_t worldPosition, b3Vec3 impulse );
-	void ApplyDirectImpulse( RealVec3_t worldPosition, b3Vec3 impulse );
+	void ApplyImpulse( DoubleVec3_t worldPosition, b3Vec3 impulse );
+	void ApplyDirectImpulse( DoubleVec3_t worldPosition, b3Vec3 impulse );
 	void AddPendingAngularVelocity( b3Vec3 change );
-	void ApplyGravity( float flTimestep, RealVec3_t gravity, bool bWorldGravity );
+	void ApplyGravity( float flTimestep, DoubleVec3_t gravity, bool bWorldGravity );
 	void ApplyDrag( float flTimestep, float flAirDensity );
 	void ClampStepVelocity();
 	void UpdateFastRotation();
@@ -299,30 +299,30 @@ public:
 
 	struct ShadowControl_t
 	{
-		RealVec3_t m_TargetPosition;
-		RealQuat_t m_TargetRotation;
+		DoubleVec3_t m_TargetPosition;
+		DoubleQuat_t m_TargetRotation;
 		float m_flMaxSpeed;
 		float m_flMaxDampSpeed;
 		float m_flMaxAngular;
 		float m_flMaxDampAngular;
 		float m_flDampFactor;
 		float m_flTeleportDistance;
-		RealVec3_t m_LastPosition;
+		DoubleVec3_t m_LastPosition;
 		b3Vec3 m_LastImpulse;
 	};
 
 	void ApplyShadowControl( ShadowControl_t &control, float flSecondsToArrival, float flTimestep );
-	void GetPose( double flTime, RealMatrix3_t &rotation, RealVec3_t &origin ) const;
-	void MoveTo( RealVec3_t origin, RealQuat_t rotation, bool isTeleport );
+	void GetPose( double flTime, DoubleMatrix3_t &rotation, DoubleVec3_t &origin ) const;
+	void MoveTo( DoubleVec3_t origin, DoubleQuat_t rotation, bool isTeleport );
 	void StepUp( float height );
 
-	RealQuat_t GetNextRotation() const { return m_NextRotation; }
+	DoubleQuat_t GetNextRotation() const { return m_NextRotation; }
 
-	const RealMatrix3_t &GetCoreRotation() const { return m_CoreRotation; }
+	const DoubleMatrix3_t &GetCoreRotation() const { return m_CoreRotation; }
 
-	RealVec3_t GetCorePosition() const { return m_CorePosition; }
+	DoubleVec3_t GetCorePosition() const { return m_CorePosition; }
 
-	RealVec3_t GetCoreOrigin() const;
+	DoubleVec3_t GetCoreOrigin() const;
 	b3Vec3 GetCoreVelocity() const;
 	void SetCoreVelocity( b3Vec3 velocity );
 	b3Vec3 GetCoreAngularVelocity() const;
@@ -331,7 +331,7 @@ public:
 	b3Vec3 IVPToCore( b3Vec3 worldIVP ) const;
 	b3Vec3 CoreToIVP( b3Vec3 local ) const;
 	b3Vec3 GetCoreSurfaceVelocity( b3Vec3 localPoint ) const;
-	RealVec3_t TransformCorePoint( b3Vec3 localPoint ) const;
+	DoubleVec3_t TransformCorePoint( b3Vec3 localPoint ) const;
 
 	b3Vec3 GetPendingVelocity() const { return m_PendingVelocity; }
 
@@ -360,16 +360,16 @@ public:
 private:
 	CPhysicsObject( CPhysicsEnvironment *pEnvironment, const objectparams_t &params, bool isStatic );
 
-	void Initialize( const objectparams_t &params, int materialIndex, RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter, float flVolume );
+	void Initialize( const objectparams_t &params, int materialIndex, DoubleVec3_t origin, DoubleQuat_t rotation, b3Vec3 massCenter, float flVolume );
 	void InitializeFromRecord( const objectparams_t &params, const vphysics_save_cphysicsobject_t &record, void *pGameData );
-	void InitializePose( RealVec3_t origin, RealQuat_t rotation, b3Vec3 massCenter );
+	void InitializePose( DoubleVec3_t origin, DoubleQuat_t rotation, b3Vec3 massCenter );
 	void ComputeRestRadius( b3Vec3 massCenter );
 	void SetContactGravity( bool bContactGravity );
-	real_t GetRotationDistance( RealQuat_t a, RealQuat_t b ) const;
-	void GetRestPose( bool bInStep, RealVec3_t &position, RealQuat_t &nextRotation, RealQuat_t &lastRotation ) const;
+	double GetRotationDistance( DoubleQuat_t a, DoubleQuat_t b ) const;
+	void GetRestPose( bool bInStep, DoubleVec3_t &position, DoubleQuat_t &nextRotation, DoubleQuat_t &lastRotation ) const;
 	RestState_t EvaluateRest( double flTime, bool bInStep, bool &bMoved, bool &bCoarseMoved ) const;
-	RealVec3_t GetCorePositionAt( double flTime ) const;
-	RealQuat_t GetRotationAt( double flTime ) const;
+	DoubleVec3_t GetCorePositionAt( double flTime ) const;
+	DoubleQuat_t GetRotationAt( double flTime ) const;
 	b3Transform GetBodyTransform() const;
 	bool HasController( const IController *pController ) const;
 	void InvalidateVelocityCache();
@@ -417,10 +417,10 @@ private:
 	b3Vec3 m_CoreVelocity = b3Vec3_zero;
 	b3Vec3 m_CoreAngularVelocity = b3Vec3_zero;
 
-	RealVec3_t m_CorePosition = {};
-	RealMatrix3_t m_CoreRotation = {};
-	RealQuat_t m_LastRotation = { 0, 0, 0, 1 };
-	RealQuat_t m_NextRotation = { 0, 0, 0, 1 };
+	DoubleVec3_t m_CorePosition = {};
+	DoubleMatrix3_t m_CoreRotation = {};
+	DoubleQuat_t m_LastRotation = { 0, 0, 0, 1 };
+	DoubleQuat_t m_NextRotation = { 0, 0, 0, 1 };
 	b3Vec3 m_ImplicitVelocity = b3Vec3_zero;
 	b3Vec3 m_Shift = b3Vec3_zero;
 	double m_flLastStepTime = 0.0;
@@ -453,12 +453,12 @@ private:
 	RestState_t m_nRestState = REST_FROZEN;
 	uint32_t m_nReviveSequence = 0;
 	uint32_t m_nUnitStamp = 0;
-	RealVec3_t m_PreviousCorePosition = {};
-	RealQuat_t m_PreviousRotation = { 0, 0, 0, 1 };
-	RealVec3_t m_FineRestPosition = {};
-	RealQuat_t m_FineRestRotation = { 0, 0, 0, 1 };
-	RealVec3_t m_CoarseRestPosition = {};
-	RealQuat_t m_CoarseRestRotation = { 0, 0, 0, 1 };
+	DoubleVec3_t m_PreviousCorePosition = {};
+	DoubleQuat_t m_PreviousRotation = { 0, 0, 0, 1 };
+	DoubleVec3_t m_FineRestPosition = {};
+	DoubleQuat_t m_FineRestRotation = { 0, 0, 0, 1 };
+	DoubleVec3_t m_CoarseRestPosition = {};
+	DoubleQuat_t m_CoarseRestRotation = { 0, 0, 0, 1 };
 	double m_flFineRestTime = 0.0;
 	double m_flCoarseRestTime = 0.0;
 	float m_flRestRadius = 0.0f;

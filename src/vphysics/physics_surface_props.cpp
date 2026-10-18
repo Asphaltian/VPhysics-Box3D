@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -18,13 +19,13 @@ static char FoldCase( char c )
 
 size_t CPhysicsSurfaceProps::CaseInsensitiveHash::operator()( std::string_view string ) const
 {
-	size_t nHash = 14695981039346656037ull;
+	uint64_t nHash = 14695981039346656037ull;
 	for ( char c : string )
 	{
 		nHash ^= static_cast<unsigned char>( FoldCase( c ) );
 		nHash *= 1099511628211ull;
 	}
-	return nHash;
+	return static_cast<size_t>( nHash );
 }
 
 bool CPhysicsSurfaceProps::CaseInsensitiveEqual::operator()( std::string_view lhs, std::string_view rhs ) const

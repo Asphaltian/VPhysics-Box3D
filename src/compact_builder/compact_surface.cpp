@@ -210,14 +210,14 @@ bool SwapCompactSurfaceFromBigEndian( std::vector<unsigned char> &surface )
 	return CCompactSurfaceSwapper( surface, false ).Swap();
 }
 
-static RealVec3_t ComputeLedgeTriangleNormal( const RealVec3_t *pPoints, const std::array<int, 3> &triangle )
+static DoubleVec3_t ComputeLedgeTriangleNormal( const DoubleVec3_t *pPoints, const std::array<int, 3> &triangle )
 {
-	const RealVec3_t a = pPoints[triangle[0]];
-	const RealVec3_t normal = Cross( pPoints[triangle[2]] - a, pPoints[triangle[1]] - a );
+	const DoubleVec3_t a = pPoints[triangle[0]];
+	const DoubleVec3_t normal = Cross( pPoints[triangle[2]] - a, pPoints[triangle[1]] - a );
 	return ( 1 / Length( normal ) ) * normal;
 }
 
-static void FindPierceTriangles( std::span<const RealVec3_t> normals, std::span<int> pierces )
+static void FindPierceTriangles( std::span<const DoubleVec3_t> normals, std::span<int> pierces )
 {
 	std::ranges::fill( pierces, -1 );
 	for ( int i = 0; i < static_cast<int>( normals.size() ); ++i )
@@ -226,10 +226,10 @@ static void FindPierceTriangles( std::span<const RealVec3_t> normals, std::span<
 			continue;
 
 		int nBest = 0;
-		real_t flBest = Dot( normals[i], normals[0] );
+		double flBest = Dot( normals[i], normals[0] );
 		for ( int j = 1; j < static_cast<int>( normals.size() ); ++j )
 		{
-			const real_t flDot = Dot( normals[i], normals[j] );
+			const double flDot = Dot( normals[i], normals[j] );
 			if ( flDot < flBest )
 			{
 				flBest = flDot;
@@ -284,7 +284,7 @@ static constexpr int FindOppositeEdge( std::span<const std::array<int, 3>> trian
 	return 0;
 }
 
-std::vector<unsigned char> WriteCompactLedge( const std::vector<RealVec3_t> &points, const std::vector<std::array<int, 3>> &triangles )
+std::vector<unsigned char> WriteCompactLedge( const std::vector<DoubleVec3_t> &points, const std::vector<std::array<int, 3>> &triangles )
 {
 	const int nTriangleCount = static_cast<int>( triangles.size() );
 
@@ -302,7 +302,7 @@ std::vector<unsigned char> WriteCompactLedge( const std::vector<RealVec3_t> &poi
 		}
 	}
 
-	std::vector<RealVec3_t> normals( nTriangleCount );
+	std::vector<DoubleVec3_t> normals( nTriangleCount );
 	for ( int i = 0; i < nTriangleCount; ++i )
 		normals[i] = ComputeLedgeTriangleNormal( points.data(), triangles[i] );
 
@@ -373,7 +373,7 @@ static constexpr std::array<std::array<int, 3>, 2> TRIANGLE_LEDGE_OPPOSITES = []
 	return opposites;
 }();
 
-std::vector<unsigned char> WriteTriangleLedge( RealVec3_t a, RealVec3_t b, RealVec3_t c )
+std::vector<unsigned char> WriteTriangleLedge( DoubleVec3_t a, DoubleVec3_t b, DoubleVec3_t c )
 {
 	if ( !( LengthSquared( Cross( c - a, b - a ) ) >= TRIANGLE_AREA_EPSILON ) )
 		return {};
@@ -385,7 +385,7 @@ std::vector<unsigned char> WriteTriangleLedge( RealVec3_t a, RealVec3_t b, RealV
 		WriteLedgeTriangle( pLedge, i, TRIANGLE_LEDGE_PIERCES[i], TRIANGLE_LEDGE_FACES[i], TRIANGLE_LEDGE_OPPOSITES[i] );
 
 	unsigned char *pPoints = pLedge + COMPACT_LEDGE_HEADER_SIZE + COMPACT_TRIANGLE_SIZE * 2;
-	const RealVec3_t points[3] = { a, b, c };
+	const DoubleVec3_t points[3] = { a, b, c };
 	for ( int i = 0; i < 3; ++i )
 		StorePoint( pPoints + i * COMPACT_POINT_SIZE, ToFloat( points[i] ) );
 

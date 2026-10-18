@@ -37,19 +37,34 @@ add_library( vphysics SHARED
 	"${SOURCE_SDK_SRC}/public/tier0/memoverride.cpp"
 )
 
+add_library( tier0 SHARED tier0/tier0.cpp )
+target_link_libraries( tier0 PRIVATE source_sdk )
+target_compile_definitions( tier0 PRIVATE TIER0_DLL_EXPORT )
+set_target_properties( tier0 PROPERTIES
+	OUTPUT_NAME "$<IF:$<BOOL:${VPHYSICS_DEDICATED}>,tier0_srv,tier0>"
+	ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tier0"
+	LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tier0"
+	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tier0"
+)
+
 target_include_directories( vphysics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} )
-target_link_libraries( vphysics PRIVATE vphysics_game source_sdk box3d::box3d qhull )
+find_package( Threads REQUIRED )
+target_link_libraries( vphysics PRIVATE source_sdk tier0 box3d::box3d qhull Threads::Threads )
 
 set_source_files_properties( "${SOURCE_SDK_SRC}/public/tier0/memoverride.cpp" PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/W0,-w>" )
 
 set_target_properties( vphysics PROPERTIES
 	PREFIX ""
+	OUTPUT_NAME "$<IF:$<BOOL:${VPHYSICS_DEDICATED}>,vphysics_srv,vphysics>"
 	CXX_VISIBILITY_PRESET hidden
 	VISIBILITY_INLINES_HIDDEN ON
+	SKIP_BUILD_RPATH ON
 )
 
 if( MSVC )
 	target_compile_options( vphysics PRIVATE /W4 /permissive- /utf-8 )
 else()
 	target_compile_options( vphysics PRIVATE -Wall -Wextra )
+	target_link_options( vphysics PRIVATE LINKER:--no-undefined "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/vphysics/vphysics.map" )
+	set_property( TARGET vphysics APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vphysics/vphysics.map" )
 endif()

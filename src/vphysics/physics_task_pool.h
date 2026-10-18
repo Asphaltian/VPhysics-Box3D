@@ -3,9 +3,10 @@
 #include "box3d/types.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
-#include <semaphore>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -59,11 +60,14 @@ private:
 	void Finish( Task_t *pTask );
 	bool ExecuteOne();
 	void WorkerMain();
+	void Signal( int nCount );
 
 	std::vector<std::thread> m_Workers;
 	std::unique_ptr<Task_t[]> m_Tasks;
 	std::atomic<int> m_nNextSlot = 0;
-	std::counting_semaphore<> m_Semaphore{ 0 };
+	std::mutex m_SignalMutex;
+	std::condition_variable m_SignalCondition;
+	int m_nSignals = 0;
 	std::atomic<bool> m_bQuit = false;
 	bool m_bSerial = false;
 };

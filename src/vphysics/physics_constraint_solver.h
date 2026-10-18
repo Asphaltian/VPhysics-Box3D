@@ -1,6 +1,6 @@
 #pragma once
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 
 #include "box3d/math_functions.h"
 

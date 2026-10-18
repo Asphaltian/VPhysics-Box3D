@@ -97,13 +97,13 @@ void CPhysicsMotionController::Simulate( CPhysicsObject *pObject, float flTimest
 	const auto applyTorque = [&]() {
 		const b3Vec3 inverseInertia = pObject->GetCoreInverseInertia();
 		const b3Vec3 change = {
-			static_cast<float>( ( real_t( inverseInertia.x ) * real_t( a.x ) ) * real_t( flTimestep ) ),
-			static_cast<float>( ( real_t( inverseInertia.y ) * real_t( a.y ) ) * real_t( flTimestep ) ),
-			static_cast<float>( ( real_t( inverseInertia.z ) * real_t( a.z ) ) * real_t( flTimestep ) ),
+			static_cast<float>( ( static_cast<double>( inverseInertia.x ) * static_cast<double>( a.x ) ) * static_cast<double>( flTimestep ) ),
+			static_cast<float>( ( static_cast<double>( inverseInertia.y ) * static_cast<double>( a.y ) ) * static_cast<double>( flTimestep ) ),
+			static_cast<float>( ( static_cast<double>( inverseInertia.z ) * static_cast<double>( a.z ) ) * static_cast<double>( flTimestep ) ),
 		};
 		pObject->SetCoreAngularVelocity( b3Add( pObject->GetCoreAngularVelocity(), change ) );
 	};
-	const real_t flForceScale = real_t( flTimestep ) * real_t( pObject->GetInvMass() );
+	const double flForceScale = static_cast<double>( flTimestep ) * static_cast<double>( pObject->GetInvMass() );
 
 	switch ( result )
 	{

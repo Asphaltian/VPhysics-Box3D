@@ -14,7 +14,7 @@ CTaskPool::CTaskPool( int nThreadCount )
 CTaskPool::~CTaskPool()
 {
 	m_bQuit.store( true );
-	m_Semaphore.release( static_cast<std::ptrdiff_t>( m_Workers.size() ) );
+	Signal( static_cast<int>( m_Workers.size() ) );
 	for ( std::thread &worker : m_Workers )
 		worker.join();
 }
@@ -48,7 +48,7 @@ CTaskPool::Task_t *CTaskPool::Enqueue( b3TaskCallback *pCallback, void *pContext
 	task.m_pCallback = pCallback;
 	task.m_pContext = pContext;
 	task.m_nStatus.store( TASK_PENDING, std::memory_order_release );
-	m_Semaphore.release();
+	Signal( 1 );
 	return &task;
 }
 
@@ -81,11 +81,27 @@ bool CTaskPool::ExecuteOne()
 	return false;
 }
 
+void CTaskPool::Signal( int nCount )
+{
+	{
+		std::lock_guard lock( m_SignalMutex );
+		m_nSignals += nCount;
+	}
+	if ( nCount == 1 )
+		m_SignalCondition.notify_one();
+	else
+		m_SignalCondition.notify_all();
+}
+
 void CTaskPool::WorkerMain()
 {
 	for ( ;; )
 	{
-		m_Semaphore.acquire();
+		{
+			std::unique_lock lock( m_SignalMutex );
+			m_SignalCondition.wait( lock, [this]() { return m_nSignals > 0; } );
+			--m_nSignals;
+		}
 		if ( m_bQuit.load() )
 			return;
 

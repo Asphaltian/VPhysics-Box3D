@@ -13,13 +13,13 @@ set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
 
 set( SOURCE_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/source-sdk-2013" CACHE PATH "Source SDK 2013 checkout" )
 
-set( BOX3D_SAMPLES OFF CACHE BOOL "" FORCE )
-set( BOX3D_UNIT_TESTS OFF CACHE BOOL "" FORCE )
-set( BOX3D_BENCHMARKS OFF CACHE BOOL "" FORCE )
-set( BOX3D_DOCS OFF CACHE BOOL "" FORCE )
-add_subdirectory( external/box3d EXCLUDE_FROM_ALL )
+option( VPHYSICS_DEDICATED "Build the Linux dedicated server module" OFF )
 
-include( cmake/Game.cmake )
+if( VPHYSICS_DEDICATED AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" )
+	message( FATAL_ERROR "VPHYSICS_DEDICATED only applies to Linux, Windows dedicated servers load the same vphysics.dll as the game" )
+endif()
+
+include( cmake/Box3D.cmake )
 include( cmake/SourceSDK.cmake )
 include( cmake/Qhull.cmake )
 

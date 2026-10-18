@@ -4,7 +4,7 @@
 #include "mathlib/vector.h"
 #include "tier0/valve_minmax_off.h"
 
-#include "compact_builder/precision.h"
+#include "compact_builder/math_util.h"
 
 #include "box3d/math_functions.h"
 
@@ -87,12 +87,12 @@ inline b3Transform ToBox3D( const Vector &origin, const QAngle &angles )
 	return { ToBox3D( origin ), ToBox3D( angles ) };
 }
 
-inline b3Quat IVPToBox3D( RealQuat_t q )
+inline b3Quat IVPToBox3D( DoubleQuat_t q )
 {
 	return { { static_cast<float>( q.x ), static_cast<float>( q.z ), -static_cast<float>( q.y ) }, static_cast<float>( q.w ) };
 }
 
-inline RealQuat_t Box3DToIVP( b3Quat q )
+inline DoubleQuat_t Box3DToIVP( b3Quat q )
 {
 	return { q.v.x, -q.v.z, q.v.y, q.s };
 }
@@ -109,13 +109,13 @@ inline Vector MatrixInverseRotateVector( const matrix3x4_t &m, const Vector &v )
 
 void AngleVectors( const QAngle &angles, b3Vec3 &forward, b3Vec3 &right, b3Vec3 &up );
 
-inline Vector IVPToSourcePosition( RealVec3_t position )
+inline Vector IVPToSourcePosition( DoubleVec3_t position )
 {
-	return Vector( static_cast<float>( real_t( IVP_TO_SOURCE ) * position.x ), static_cast<float>( real_t( IVP_TO_SOURCE ) * position.z ), -static_cast<float>( real_t( IVP_TO_SOURCE ) * position.y ) );
+	return Vector( static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * position.x ), static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * position.z ), -static_cast<float>( static_cast<double>( IVP_TO_SOURCE ) * position.y ) );
 }
 
-RealQuat_t AnglesToIVP( const QAngle &angles );
-RealQuat_t MatrixToIVP( const matrix3x4_t &matrix, RealVec3_t &origin );
-QAngle IVPToAngles( const RealMatrix3_t &rotation );
-void IVPToMatrix( const RealMatrix3_t &rotation, RealVec3_t origin, matrix3x4_t &matrix );
+DoubleQuat_t AnglesToIVP( const QAngle &angles );
+DoubleQuat_t MatrixToIVP( const matrix3x4_t &matrix, DoubleVec3_t &origin );
+QAngle IVPToAngles( const DoubleMatrix3_t &rotation );
+void IVPToMatrix( const DoubleMatrix3_t &rotation, DoubleVec3_t origin, matrix3x4_t &matrix );
 QAngle MatrixAngles( const matrix3x4_t &matrix );

@@ -23,7 +23,6 @@ For discussions, please join the Discord server [here](https://discord.gg/rbCJdZ
 | Raycast vehicles (airboat) | ✔️ | ❌ | ✔️ |
 | Shadow controllers (NPCs, doors) | ✔️ | ✔️ | ✔️ |
 | Save / restore | ✔️ | ✔️ | ✔️ |
-| Portal support | ✔️ | ✔️ | ❌ |
 | Per-object no-collide callbacks | ✔️ | ✔️ | ✔️ |
 | Crash-resistant solver | ❌ | ✔️ | ✔️ |
 | Thousands of objects without lag | ❌ | ✔️ | ✔️ |

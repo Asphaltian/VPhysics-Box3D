@@ -238,6 +238,7 @@ public:
 	void RemoveVelocityFlush( CPhysicsObject *pObject );
 	void NotifyWoken( CPhysicsObject *pObject );
 	void RemoveWoken( CPhysicsObject *pObject );
+	void UpdateWorldMaterials();
 	void SyncSleepingObjects();
 	void ForceRest( CPhysicsObject *pObject );
 	void RemovePlayerGround( const CPhysicsObject *pObject );
@@ -285,12 +286,14 @@ private:
 		b3ContactId m_ContactId;
 		uint32_t m_nKeyIndex[2];
 		uint32_t m_nScanStep;
+		uint32_t m_nBeginStep;
 		int m_nFirstSide;
 		int m_nDisableCount;
 		float m_flSpanCapacity;
 		float m_flMinSeparation;
 		bool m_bCompound;
 		bool m_bPenetrationRefused;
+		bool m_bPenetrating;
 		bool m_bDetached;
 		std::vector<ContactPoint_t> m_Points;
 		std::vector<FrictionContact_t *> m_Friction;

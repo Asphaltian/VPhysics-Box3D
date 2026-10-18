@@ -30,6 +30,8 @@ public:
 	IPhysicsCollisionSet *FindCollisionSet( unsigned int id ) override;
 	void DestroyAllCollisionSets() override;
 
+	void UpdateWorldMaterials();
+
 private:
 	std::vector<CPhysicsEnvironment *> m_Environments;
 	std::vector<std::pair<unsigned int, std::unique_ptr<CPhysicsCollisionSet>>> m_CollisionSets;

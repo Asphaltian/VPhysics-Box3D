@@ -115,14 +115,14 @@ static b3SurfaceMaterial GetMeshMaterial( const CollideMesh_t &mesh, const b3Sur
 	return mesh.m_nMaterial ? GetSurfaceMaterial( g_PhysicsSurfaceProps.GetWorldMaterialIndex( mesh.m_nMaterial ) ) : objectMaterial;
 }
 
-static bool HasOwnMaterial( b3ShapeId shape )
+static int GetShapeWorldMaterial( b3ShapeId shape )
 {
 	const void *pUserData = b3Shape_GetUserData( shape );
 	if ( !pUserData )
-		return false;
+		return 0;
 	if ( b3Shape_GetType( shape ) == b3_meshShape )
-		return static_cast<const CollideMesh_t *>( pUserData )->m_nMaterial != 0;
-	return static_cast<const CPhysConvex *>( pUserData )->GetUniformMaterial() != 0;
+		return static_cast<const CollideMesh_t *>( pUserData )->m_nMaterial;
+	return static_cast<const CPhysConvex *>( pUserData )->GetUniformMaterial();
 }
 
 static RealVec3_t RoundToFloat( RealVec3_t v )
@@ -770,6 +770,8 @@ CPhysicsObject::SleepState_t CPhysicsObject::NotifyWake()
 	const SleepState_t nPrevious = m_nSleepState;
 	m_nSleepState = AWAKE;
 	m_bAsleepSinceCreation = false;
+	if ( nPrevious != AWAKE )
+		m_bHasFilterBounds = false;
 	return nPrevious;
 }
 
@@ -1201,13 +1203,21 @@ void CPhysicsObject::SetMaterialIndex( int materialIndex )
 	m_nCallbackFlags |= CALLBACK_ENABLING_COLLISION;
 	const b3SurfaceMaterial material = GetSurfaceMaterial( materialIndex );
 	ForEachShape( m_Body, [&]( b3ShapeId shape ) {
-		if ( !HasOwnMaterial( shape ) )
+		if ( !GetShapeWorldMaterial( shape ) )
 			b3Shape_SetSurfaceMaterial( shape, material );
 	} );
 	m_nCallbackFlags &= ~CALLBACK_ENABLING_COLLISION;
 
 	if ( m_pShadow )
 		m_pShadow->ObjectMaterialChanged( materialIndex );
+}
+
+void CPhysicsObject::UpdateWorldMaterials()
+{
+	ForEachShape( m_Body, []( b3ShapeId shape ) {
+		if ( const int nMaterial = GetShapeWorldMaterial( shape ) )
+			b3Shape_SetSurfaceMaterial( shape, GetSurfaceMaterial( g_PhysicsSurfaceProps.GetWorldMaterialIndex( nMaterial ) ) );
+	} );
 }
 
 float CPhysicsObject::GetEnergy() const

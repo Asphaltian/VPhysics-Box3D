@@ -921,6 +921,12 @@ void CPhysicsEnvironment::SetSimulationTimestep( float timestep )
 	UpdateContactTuning();
 }
 
+void CPhysicsEnvironment::UpdateWorldMaterials()
+{
+	for ( IPhysicsObject *pObject : m_Objects )
+		static_cast<CPhysicsObject *>( pObject )->UpdateWorldMaterials();
+}
+
 void CPhysicsEnvironment::ResetSimulationClock()
 {
 	for ( IPhysicsObject *pObject : m_Objects )
@@ -1100,6 +1106,9 @@ void CPhysicsEnvironment::QueryFilterPartners( CPhysicsObject *pObject, const b3
 		if ( !pPartner || pPartner == pObject || !pPartner->IsCollisionEnabled() )
 			continue;
 
+		if ( pObject->GetSleepState() != CPhysicsObject::AWAKE && pPartner->GetSleepState() != CPhysicsObject::AWAKE )
+			continue;
+
 		bool bCollide;
 		if ( !pObject->FindFilterDecision( pPartner, bCollide ) )
 			ShouldCollide( pObject, pPartner );
@@ -1117,7 +1126,8 @@ void CPhysicsEnvironment::ResolveFilterDecisions( CPhysicsObject *pObject, bool 
 		return;
 
 	const b3AABB query = GetFilterQueryBounds( pObject, bounds );
-	pObject->SetFilterBounds( query );
+	if ( pObject->GetSleepState() == CPhysicsObject::AWAKE )
+		pObject->SetFilterBounds( query );
 	QueryFilterPartners( pObject, query );
 }
 
@@ -2044,12 +2054,14 @@ void CPhysicsEnvironment::ProcessContactEvents()
 		contact.m_Shapes[1] = event.shapeIdB;
 		contact.m_ContactId = event.contactId;
 		contact.m_nScanStep = 0;
+		contact.m_nBeginStep = m_nStepCount;
 		contact.m_nFirstSide = GetInitialFirstSide( contact.m_pObjects[0], contact.m_pObjects[1] );
 		contact.m_nDisableCount = 0;
 		contact.m_flSpanCapacity = 0.0f;
 		contact.m_flMinSeparation = FLT_MAX;
 		contact.m_bCompound = b3Body_GetShapeCount( contact.m_pObjects[0]->GetBody() ) > 1 || b3Body_GetShapeCount( contact.m_pObjects[1]->GetBody() ) > 1;
 		contact.m_bPenetrationRefused = false;
+		contact.m_bPenetrating = false;
 		contact.m_bDetached = false;
 
 		auto detached = m_DetachedContacts.find( GetShapePairKey( event.shapeIdA, event.shapeIdB ) );
@@ -2063,7 +2075,9 @@ void CPhysicsEnvironment::ProcessContactEvents()
 			{
 				const int nFlip = bSameOrder ? 0 : 1;
 				contact.m_nFirstSide = previous.m_nFirstSide ^ nFlip;
+				contact.m_nBeginStep = previous.m_nBeginStep;
 				contact.m_bPenetrationRefused = previous.m_bPenetrationRefused;
+				contact.m_bPenetrating = previous.m_bPenetrating;
 				contact.m_Friction = std::move( previous.m_Friction );
 				for ( FrictionContact_t *pFriction : contact.m_Friction )
 					pFriction->m_nSide ^= nFlip;
@@ -2086,7 +2100,9 @@ void CPhysicsEnvironment::ProcessContactEvents()
 				const int nFlip = bSameOrder ? 0 : 1;
 				contact.m_nFirstSide = reset.m_nFirstSide ^ nFlip;
 				contact.m_nDisableCount = reset.m_nDisableCount;
+				contact.m_nBeginStep = reset.m_nBeginStep;
 				contact.m_bPenetrationRefused = reset.m_bPenetrationRefused;
+				contact.m_bPenetrating = reset.m_bPenetrating;
 				contact.m_Friction = std::move( reset.m_Friction );
 				if ( bSameOrder )
 					contact.m_Points = std::move( reset.m_Points );
@@ -2377,12 +2393,24 @@ void CPhysicsEnvironment::ProcessPenetration()
 		if ( it == m_Contacts.end() )
 			continue;
 
-		const Contact_t &contact = it->second;
+		Contact_t &contact = it->second;
 		CPhysicsObject *pObject0 = contact.m_pObjects[0], *pObject1 = contact.m_pObjects[1];
+		if ( !( contact.m_flMinSeparation < PENETRATION_SEPARATION ) )
+			contact.m_bPenetrating = false;
+		else if ( contact.m_nBeginStep == m_nStepCount && ( pObject0->GetPlacedStep() == m_nStepCount || pObject1->GetPlacedStep() == m_nStepCount ) )
+			contact.m_bPenetrating = true;
+
+		if ( contact.m_bPenetrationRefused && !contact.m_bPenetrating )
+		{
+			contact.m_bPenetrationRefused = false;
+			--contact.m_nDisableCount;
+			EnablePair( GetPairKey( pObject0, pObject1 ) );
+		}
+
 		if ( contact.m_bPenetrationRefused || ( pObject0->GetSleepState() != CPhysicsObject::AWAKE && pObject1->GetSleepState() != CPhysicsObject::AWAKE ) )
 			continue;
 
-		if ( contact.m_nDisableCount > 0 || !( contact.m_flMinSeparation < PENETRATION_SEPARATION ) )
+		if ( contact.m_nDisableCount > 0 || !contact.m_bPenetrating )
 			continue;
 
 		if ( !m_pCollisionSolver )
@@ -2433,6 +2461,7 @@ void CPhysicsEnvironment::QueuePenetrationCheck( CPhysicsObject *pObject )
 {
 	if ( !pObject->IsStatic() )
 	{
+		pObject->SetPlacedStep( m_nStepCount + 1 );
 		if ( std::find( m_PendingHoldChecks.begin(), m_PendingHoldChecks.end(), pObject ) == m_PendingHoldChecks.end() )
 			m_PendingHoldChecks.push_back( pObject );
 		return;
@@ -2506,7 +2535,7 @@ bool CPhysicsEnvironment::HasShapeFriction( const CPhysicsObject *pObject, b3Sha
 void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId meshShape )
 {
 	const uint64_t nKey = GetShapePairKey( shape, meshShape );
-	if ( m_HeldShapePairs.contains( nKey ) )
+	if ( m_HeldShapePairs.contains( nKey ) || m_ProxyResetContacts.contains( nKey ) )
 		return;
 
 	CPhysicsObject *pObject = GetShapeObject( shape );

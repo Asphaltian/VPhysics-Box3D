@@ -23,6 +23,8 @@ public:
 
 	void SetSerial( bool bSerial ) { m_bSerial = bSerial; }
 
+	bool IsSerial() const { return m_bSerial; }
+
 	void Reset() { m_nNextSlot.store( 0, std::memory_order_relaxed ); }
 
 	void ParallelFor( int nCount, const std::function<void( int nIndex, int nTask )> &function );

@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -1052,6 +1053,11 @@ bool CPhysicsObject::IsAttachedToConstraint( bool bExternalOnly ) const
 			return true;
 	}
 	return false;
+}
+
+int CPhysicsObject::GetHighestControllerPriority() const
+{
+	return m_ControllerOrder.empty() ? std::numeric_limits<int>::min() : m_ControllerOrder.back()->GetPriority();
 }
 
 void CPhysicsObject::RunControllers( float flTimestep, int nPriorityFloor )

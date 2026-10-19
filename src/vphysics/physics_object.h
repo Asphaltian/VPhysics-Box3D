@@ -293,7 +293,15 @@ public:
 
 	void SetPlacedStep( uint32_t nStep ) { m_nPlacedStep = nStep; }
 
-	void ResetControllerCursor() { m_nControllerCursor = static_cast<int>( m_ControllerOrder.size() ) - 1; }
+	void ResetControllerCursor( uint32_t nStep )
+	{
+		m_nControllerCursor = static_cast<int>( m_ControllerOrder.size() ) - 1;
+		m_nControllerStep = nStep;
+	}
+
+	uint32_t GetControllerStep() const { return m_nControllerStep; }
+
+	int GetHighestControllerPriority() const;
 
 	void RunControllers( float flTimestep, int nPriorityFloor );
 
@@ -405,6 +413,7 @@ private:
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	uint32_t m_nPreStepCount = 0;
 	int m_nControllerCursor = -1;
+	uint32_t m_nControllerStep = UINT32_MAX;
 	const CPhysCollide *m_pCollide = nullptr;
 	void *m_pGameData = nullptr;
 	IPhysicsShadowController *m_pShadow = nullptr;

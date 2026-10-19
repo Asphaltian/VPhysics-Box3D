@@ -24,21 +24,8 @@ static constexpr double THIRD = 1.0 / 3.0;
 static constexpr double TWELFTH = 1.0 / 12.0;
 static constexpr double NEGATIVE_SIXTH = -1.0 / 6.0;
 
-struct Submersion_t
-{
-	float m_flVolume = 0.0f;
-	b3Vec3 m_Center = b3Vec3_zero;
-	b3Vec3 m_Force = b3Vec3_zero;
-	b3Vec3 m_Torque = b3Vec3_zero;
-	b3Vec3 m_TangentTorque = b3Vec3_zero;
-	float m_flArea = 0.0f;
-};
-
-struct Plane_t
-{
-	b3Vec3 m_Normal;
-	float m_flDistance;
-};
+using Submersion_t = CBuoyancyController::Submersion_t;
+using Plane_t = CBuoyancyController::Plane_t;
 
 struct DoublePlane_t
 {
@@ -597,15 +584,11 @@ static b3Vec3 GetWeightedPoint( const b3Vec3 points[3], int k0, double w0, doubl
 	};
 }
 
-static void ComputePolygonSubmersion( const CPhysCollideCompactSurface &surface, const std::vector<int> &ledges, const CPhysicsObject *pObject, const DoubleMatrix3_t &rotation, DoubleVec3_t origin, const Plane_t &water, float flPressureDrag, float flSkinDrag, b3Vec3 fluidVelocity, Submersion_t &out )
+static void ComputePolygonSubmersion( const CPhysCollideCompactSurface &surface, const std::vector<int> &ledges, const DoubleMatrix3_t &coreRotation, DoubleVec3_t coreOrigin, b3Vec3 coreAngular, b3Vec3 coreVelocity, const DoubleMatrix3_t &rotation, DoubleVec3_t origin, const Plane_t &water, float flPressureDrag, float flSkinDrag, b3Vec3 fluidVelocity, Submersion_t &out )
 {
 	const float eps = BUOYANCY_EPSILON;
 	const b3Vec3 n = water.m_Normal;
 	const b3Vec3 surfacePoint = Scale( n, -static_cast<double>( water.m_flDistance ) );
-	const DoubleMatrix3_t &coreRotation = pObject->GetCoreRotation();
-	const DoubleVec3_t coreOrigin = pObject->GetCorePosition();
-	const b3Vec3 coreAngular = pObject->GetCoreAngularVelocity();
-	const b3Vec3 coreVelocity = pObject->GetCoreVelocity();
 
 	float flVolume = 0.0f;
 	b3Vec3 volumeCenter = b3Vec3_zero;
@@ -738,77 +721,97 @@ CBuoyancyController::~CBuoyancyController()
 	m_pObject->DetachController( this );
 }
 
-void CBuoyancyController::Simulate( CPhysicsObject *pObject, float flTimestep )
+void CBuoyancyController::Prepare()
 {
+	CPhysicsObject *pObject = m_pObject;
+	m_nPreparedStep = pObject->GetEnvironment()->GetStepCount();
 	const bool bSimulate = !pObject->GetShadowController() && ( pObject->GetCallbackFlags() & CALLBACK_DO_FLUID_SIMULATION );
-	const float flDensity = bSimulate ? pObject->GetBuoyancyRatio() * m_pFluid->GetDensity() : 0.0f;
-	if ( flDensity == 0.0f || std::isnan( flDensity ) )
+	m_flDensity = bSimulate ? pObject->GetBuoyancyRatio() * m_pFluid->GetDensity() : 0.0f;
+	if ( m_flDensity == 0.0f || std::isnan( m_flDensity ) )
 		return;
 
 	b3Vec3 surfaceNormal, current;
 	float flSurfaceOffset;
 	m_pFluid->GetSurface( surfaceNormal, flSurfaceOffset, current );
 
-	if ( m_flArea > m_flPreviousArea )
-		m_FluidVelocity = b3MulSV( m_flPreviousArea / m_flArea, m_FluidVelocity );
+	m_PreparedFluidVelocity = m_flArea > m_flPreviousArea ? b3MulSV( m_flPreviousArea / m_flArea, m_FluidVelocity ) : m_FluidVelocity;
+	m_Speed = pObject->GetCoreVelocity();
+	m_WorldFluidVelocity = b3Add( current, m_PreparedFluidVelocity );
+	m_CoreAngularVelocity = pObject->GetCoreAngularVelocity();
+	m_CoreRotation = pObject->GetCoreRotation();
+	m_CoreOrigin = pObject->GetCorePosition();
+
+	pObject->GetPose( pObject->GetEnvironment()->GetCurrentTime(), m_Rotation, m_Origin );
+	const DoubleVec3_t n = ToDouble( surfaceNormal );
+	const float flLocalOffset = static_cast<float>( ( n.x * m_Origin.x + n.y * m_Origin.y ) + ( n.z * m_Origin.z + static_cast<double>( flSurfaceOffset ) ) );
+	m_Water = { ToFloat( InverseRotate( m_Rotation, surfaceNormal ) ), flLocalOffset };
+	m_flPressureDrag = ( m_pFluid->GetDamping() * 0.5f ) * m_flDensity;
+	m_flSkinDrag = ( SKIN_FRICTION_COEFFICIENT * 0.5f ) * m_flDensity;
+
+	m_pSurface = pObject->GetCollide() ? pObject->GetCollide()->GetCompactSurface() : nullptr;
+	m_bSphere = !pObject->GetCollide();
+	m_flSphereRadius = pObject->GetIVPSphereRadius();
+}
+
+void CBuoyancyController::ComputeSubmersion()
+{
+	m_Submersion = {};
+	if ( !( m_flDensity > 0.0f ) )
+		return;
+
+	const b3Vec3 localFluidVelocity = ToFloat( InverseRotate( m_Rotation, m_WorldFluidVelocity ) );
+	if ( m_pSurface )
+		ComputePolygonSubmersion( *m_pSurface, m_Ledges, m_CoreRotation, m_CoreOrigin, m_CoreAngularVelocity, m_Speed, m_Rotation, m_Origin, m_Water, m_flPressureDrag, m_flSkinDrag, localFluidVelocity, m_Submersion );
+	else if ( m_bSphere )
+		ComputeSphereSubmersion( m_flSphereRadius, m_Water, ToFloat( InverseRotate( m_Rotation, b3Sub( m_WorldFluidVelocity, m_Speed ) ) ), m_flPressureDrag, m_flSkinDrag, m_Submersion );
+
+	if ( !( m_Submersion.m_flVolume > BUOYANCY_EPSILON ) && !( LengthSquared3( m_Submersion.m_Force ) > BUOYANCY_EPSILON ) )
+		m_Submersion = {};
+}
+
+void CBuoyancyController::Simulate( CPhysicsObject *pObject, float flTimestep )
+{
+	if ( m_nPreparedStep != pObject->GetEnvironment()->GetStepCount() )
+	{
+		Prepare();
+		ComputeSubmersion();
+	}
+	m_nPreparedStep = UINT32_MAX;
+	if ( m_flDensity == 0.0f || std::isnan( m_flDensity ) )
+		return;
+
+	m_FluidVelocity = m_PreparedFluidVelocity;
 	m_flPreviousArea = m_flArea;
 	m_flArea = 0.0f;
 
-	const b3Vec3 speed = pObject->GetCoreVelocity();
-	const b3Vec3 fluidVelocity = b3Add( current, m_FluidVelocity );
-	const b3Vec3 relativeVelocity = b3Sub( fluidVelocity, speed );
-
-	DoubleMatrix3_t rotation;
-	DoubleVec3_t origin;
-	pObject->GetPose( pObject->GetEnvironment()->GetCurrentTime(), rotation, origin );
-	const DoubleVec3_t n = ToDouble( surfaceNormal );
-	const float flLocalOffset = static_cast<float>( ( n.x * origin.x + n.y * origin.y ) + ( n.z * origin.z + static_cast<double>( flSurfaceOffset ) ) );
-	const Plane_t water = { ToFloat( InverseRotate( rotation, surfaceNormal ) ), flLocalOffset };
-	const float flPressureDrag = ( m_pFluid->GetDamping() * 0.5f ) * flDensity;
-	const float flSkinDrag = ( SKIN_FRICTION_COEFFICIENT * 0.5f ) * flDensity;
-
-	Submersion_t submersion;
-	const CPhysCollideCompactSurface *pSurface = pObject->GetCollide() ? pObject->GetCollide()->GetCompactSurface() : nullptr;
-	if ( flDensity > 0.0f )
-	{
-		const b3Vec3 localFluidVelocity = ToFloat( InverseRotate( rotation, fluidVelocity ) );
-		if ( pSurface )
-			ComputePolygonSubmersion( *pSurface, m_Ledges, pObject, rotation, origin, water, flPressureDrag, flSkinDrag, localFluidVelocity, submersion );
-		else if ( !pObject->GetCollide() )
-			ComputeSphereSubmersion( pObject->GetIVPSphereRadius(), water, ToFloat( InverseRotate( rotation, relativeVelocity ) ), flPressureDrag, flSkinDrag, submersion );
-
-		if ( !( submersion.m_flVolume > BUOYANCY_EPSILON ) && !( LengthSquared3( submersion.m_Force ) > BUOYANCY_EPSILON ) )
-			submersion = {};
-	}
-
+	const Submersion_t &submersion = m_Submersion;
 	if ( submersion.m_flVolume > BUOYANCY_EPSILON )
 	{
 		const DoubleVec3_t gravity = pObject->GetEnvironment()->GetIVPGravity();
-		const double flScale = static_cast<double>( -( submersion.m_flVolume * flDensity ) ) * static_cast<double>( flTimestep );
+		const double flScale = static_cast<double>( -( submersion.m_flVolume * m_flDensity ) ) * static_cast<double>( flTimestep );
 		const b3Vec3 impulse = Scale( { static_cast<float>( gravity.x ), static_cast<float>( gravity.y ), static_cast<float>( gravity.z ) }, flScale );
-		pObject->ApplyImpulse( Rotate( rotation, submersion.m_Center ) + origin, impulse );
+		pObject->ApplyImpulse( Rotate( m_Rotation, submersion.m_Center ) + m_Origin, impulse );
 	}
 
 	const float flArea = std::fabs( submersion.m_flArea );
 	const float flTangentScale = static_cast<float>( ( std::sqrt( static_cast<double>( flArea ) ) * static_cast<double>( -TANGENTIAL_TORQUE_COEFFICIENT ) ) * static_cast<double>( TANGENTIAL_TORQUE_SCALE ) );
 	const b3Vec3 tangentTorque = Scale( submersion.m_TangentTorque, static_cast<double>( flTangentScale ) * static_cast<double>( flTimestep ) );
 	const b3Vec3 torque = b3MulSV( flTimestep, submersion.m_Torque );
-	pObject->ApplyImpulse( origin, ToFloat( Rotate( rotation, b3MulSV( flTimestep, submersion.m_Force ) ) ) );
+	pObject->ApplyImpulse( m_Origin, ToFloat( Rotate( m_Rotation, b3MulSV( flTimestep, submersion.m_Force ) ) ) );
 
 	const b3Vec3 inverseInertia = pObject->GetCoreInverseInertia();
 	const b3Vec3 angularChange = b3Add( b3Mul( tangentTorque, inverseInertia ), b3Mul( torque, inverseInertia ) );
 	pObject->AddPendingAngularVelocity( angularChange );
 
-	if ( !pObject->GetCollide() )
+	if ( m_bSphere )
 	{
-		const float flRadius = pObject->GetIVPSphereRadius();
-		const double flSpin = static_cast<double>( flArea * SPHERE_SPIN_DAMPING ) / ( ( static_cast<double>( flRadius ) * ( PI + PI ) ) * static_cast<double>( flRadius ) );
+		const double flSpin = static_cast<double>( flArea * SPHERE_SPIN_DAMPING ) / ( ( static_cast<double>( m_flSphereRadius ) * ( PI + PI ) ) * static_cast<double>( m_flSphereRadius ) );
 		pObject->AddPendingAngularVelocity( b3Neg( Scale( pObject->GetCoreAngularVelocity(), flSpin ) ) );
 	}
 
 	m_flArea = static_cast<float>( static_cast<double>( flArea ) + static_cast<double>( m_flArea ) );
 
-	m_FluidVelocity = ScaleAdd( b3Sub( speed, fluidVelocity ), FLUID_VELOCITY_DRAG * flTimestep, m_FluidVelocity );
+	m_FluidVelocity = ScaleAdd( b3Sub( m_Speed, m_WorldFluidVelocity ), FLUID_VELOCITY_DRAG * flTimestep, m_FluidVelocity );
 }
 
 void CBuoyancyController::ObjectDestroyed( CPhysicsObject *pObject )
@@ -885,6 +888,18 @@ void CPhysicsFluidController::WakeAllSleepingObjects()
 {
 	for ( const std::unique_ptr<CBuoyancyController> &pController : m_Controllers )
 		pController->GetObject()->Wake();
+}
+
+void CPhysicsFluidController::PrepareControllers( uint32_t nStep, std::vector<CBuoyancyController *> &prepared )
+{
+	for ( const std::unique_ptr<CBuoyancyController> &pController : m_Controllers )
+	{
+		if ( pController->GetObject()->GetControllerStep() != nStep )
+			continue;
+
+		pController->Prepare();
+		prepared.push_back( pController.get() );
+	}
 }
 
 void CPhysicsFluidController::ObjectEntered( CPhysicsObject *pObject )

@@ -562,11 +562,12 @@ void CPhysicsEnvironment::Step( double flTime )
 		if ( pObject->GetRestState() == CPhysicsObject::REST_FROZEN )
 			pObject->Revive( m_flCurrentTime, ++m_nReviveSequence );
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
-		pObject->ResetControllerCursor();
+		pObject->ResetControllerCursor( m_nStepCount );
 	}
 	BuildSimulationUnits();
 	UpdateRestTimers();
 
+	PrepareBuoyancy();
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
 		pObject->RunControllers( m_flTimestep, CPhysicsSpring::PRIORITY );
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
@@ -743,6 +744,23 @@ static void CollectUnit( CPhysicsObject *pObject, uint32_t nStamp, std::vector<C
 	}
 }
 
+void CPhysicsEnvironment::PrepareBuoyancy()
+{
+	if ( m_FluidControllers.empty() || m_TaskPool.IsSerial() )
+		return;
+
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	{
+		if ( pObject->GetHighestControllerPriority() > CBuoyancyController::PRIORITY )
+			return;
+	}
+
+	m_PreparedBuoyancy.clear();
+	for ( CPhysicsFluidController *pFluid : m_FluidControllers )
+		pFluid->PrepareControllers( m_nStepCount, m_PreparedBuoyancy );
+	m_TaskPool.ParallelFor( static_cast<int>( m_PreparedBuoyancy.size() ), [this]( int nIndex, int ) { m_PreparedBuoyancy[nIndex]->ComputeSubmersion(); } );
+}
+
 void CPhysicsEnvironment::BuildSimulationUnits()
 {
 	m_UnitObjects.clear();
@@ -768,7 +786,7 @@ void CPhysicsEnvironment::BuildSimulationUnits()
 				if ( pMember->GetRestState() == CPhysicsObject::REST_FROZEN )
 					pMember->Revive( m_flCurrentTime, ++m_nReviveSequence );
 				pMember->RebuildCoreMatrix( m_flCurrentTime );
-				pMember->ResetControllerCursor();
+				pMember->ResetControllerCursor( m_nStepCount );
 				m_SimulatedObjects.push_back( pMember );
 			}
 			unit.m_nSequence = std::max( unit.m_nSequence, pMember->GetReviveSequence() );

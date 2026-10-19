@@ -23,6 +23,7 @@ struct CollideMesh_t;
 class CPhysicsConstraint;
 class CPhysicsConstraintGroup;
 class CPhysicsObject;
+class CBuoyancyController;
 class CPhysicsFluidController;
 class CPhysicsPlayerController;
 
@@ -249,6 +250,7 @@ public:
 	bool IsShapePairHeld( b3ShapeId shape0, b3ShapeId shape1 ) const;
 	void ResolveFilterDecisions( CPhysicsObject *pObject, bool bForce );
 	void ResolveSteppedFilterDecisions();
+	void PrepareBuoyancy();
 	void RecheckCollisionFilter( CPhysicsObject *pObject );
 	void RecheckContactPoints( CPhysicsObject *pObject );
 	void RemoveContacts( CPhysicsObject *pObject, CPhysicsObject *pPartner );
@@ -431,6 +433,7 @@ private:
 	};
 
 	std::vector<CPhysicsObject *> m_FilterQueryObjects;
+	std::vector<CBuoyancyController *> m_PreparedBuoyancy;
 	std::vector<FilterQueryResult_t> m_FilterQueryResults;
 	std::vector<std::vector<CPhysicsObject *>> m_ThreadCandidates;
 	std::vector<std::vector<CPhysicsObject *>> m_ThreadUndecided;

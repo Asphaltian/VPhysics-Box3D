@@ -273,6 +273,8 @@ public:
 	void ApplyDrag( float flTimestep, float flAirDensity );
 	void ClampStepVelocity();
 	void UpdateFastRotation();
+	void UpdateFastMotion( float flTimestep );
+	void UpdateBullet( float flTimestep );
 
 	void AttachController( IController *pController );
 	void DetachController( IController *pController );
@@ -396,6 +398,7 @@ private:
 	void ComputeDragBases();
 	void UpdateInverseMass();
 	void UpdateMassData();
+	void ApplyMassData();
 	void QueuePendingVelocity();
 
 	CPhysicsEnvironment *m_pEnvironment;
@@ -411,6 +414,8 @@ private:
 	FrictionContact_t *m_pFrictionHead = nullptr;
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
+	float m_flFastDistance = 0.0f;
+	float m_flMaxExtent = 0.0f;
 	uint32_t m_nPreStepCount = 0;
 	int m_nControllerCursor = -1;
 	uint32_t m_nControllerStep = UINT32_MAX;
@@ -495,4 +500,6 @@ private:
 	bool m_bGravityApplied = false;
 	bool m_bContactGravity = false;
 	bool m_bRestFast = false;
+	bool m_bFastMotion = false;
+	bool m_bBullet = false;
 };

@@ -587,7 +587,10 @@ void CPhysicsEnvironment::Step( double flTime )
 	{
 		pObject->UpdateFastRotation();
 		pObject->CapturePreStepVelocity( m_nStepCount );
+		pObject->UpdateFastMotion( m_flTimestep );
 	}
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+		pObject->UpdateBullet( m_flTimestep );
 	ResolveSteppedFilterDecisions();
 	DetectPendingPenetrationHolds();
 	ApplyPenetrationResets();

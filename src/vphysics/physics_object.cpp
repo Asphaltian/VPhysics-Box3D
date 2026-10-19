@@ -469,6 +469,27 @@ void CPhysicsObject::UpdateFastRotation()
 		b3Body_AllowFastRotation( m_Body, m_pEnvironment->AllowsFastRotation() && IsSolverIsolated() );
 }
 
+void CPhysicsObject::UpdateFastMotion( float flTimestep )
+{
+	const float flSpeed = b3Length( m_PreStepVelocity ) + b3Length( m_PreStepAngularVelocity ) * m_flMaxExtent;
+	m_bFastMotion = m_bMotionEnabled && flSpeed * flTimestep > m_flFastDistance;
+}
+
+void CPhysicsObject::UpdateBullet( float flTimestep )
+{
+	bool bBullet = m_bFastMotion;
+	for ( const FrictionContact_t *pFriction = m_pFrictionHead; bBullet && pFriction; pFriction = pFriction->GetNext( this ) )
+	{
+		const CPhysicsObject *pPartner = pFriction->m_pObjects[pFriction->m_pObjects[0] == this ? 1 : 0];
+		bBullet = !pPartner->IsMoveable() || pPartner->m_bFastMotion || b3Length( b3Sub( m_PreStepVelocity, pPartner->m_PreStepVelocity ) ) * flTimestep > m_flFastDistance;
+	}
+	if ( bBullet == m_bBullet )
+		return;
+
+	m_bBullet = bBullet;
+	b3Body_SetBullet( m_Body, bBullet );
+}
+
 void CPhysicsObject::CreateShapes( bool bSensor )
 {
 	const b3SurfaceMaterial objectMaterial = GetSurfaceMaterial( m_nMaterialIndex );
@@ -1097,6 +1118,9 @@ void CPhysicsObject::EnableMotion( bool enable )
 	m_PendingAngularVelocity = b3Vec3_zero;
 	UpdateShapeFilters( false );
 	b3Body_SetType( m_Body, enable ? b3_dynamicBody : b3_kinematicBody );
+	m_bFastMotion = false;
+	m_bBullet = false;
+	b3Body_SetBullet( m_Body, false );
 	if ( enable )
 	{
 		UpdateInverseMass();
@@ -1828,6 +1852,13 @@ void CPhysicsObject::UpdateInverseMass()
 }
 
 void CPhysicsObject::UpdateMassData()
+{
+	ApplyMassData();
+	m_flFastDistance = b3Body_GetSafetyFactor( m_Body ) * b3Body_GetMinExtent( m_Body );
+	m_flMaxExtent = b3Length( b3Body_GetMaxExtent( m_Body ) );
+}
+
+void CPhysicsObject::ApplyMassData()
 {
 	if ( m_bStatic || !m_bMotionEnabled )
 	{

@@ -401,6 +401,7 @@ static std::vector<b3Vec3> IntersectPlanes( const std::vector<b3Vec3> &normals, 
 b3HullData *CPhysConvex::CreateHull( b3HullData *pBase ) const
 {
 	static constexpr float INTERSECTION_TOLERANCE = 1e-3f;
+	static constexpr float MAX_HULL_GROWTH = 2.0f * SHAPE_INFLATION;
 
 	const b3Vec3 center = pBase->center;
 	const b3Plane *pPlanes = b3GetHullPlanes( pBase );
@@ -408,31 +409,85 @@ b3HullData *CPhysConvex::CreateHull( b3HullData *pBase ) const
 	for ( const b3Vec3 &point : m_Points )
 		flScale = std::max( flScale, b3DistanceSquared( point, center ) );
 
-	std::vector<b3Vec3> normals( pBase->faceCount ), dual( pBase->faceCount );
-	std::vector<float> offsets( pBase->faceCount );
-	for ( int i = 0; i < pBase->faceCount; ++i )
-	{
+	std::vector<b3Vec3> normals, dual;
+	std::vector<float> offsets;
+	const auto AddPlane = [&]( b3Vec3 normal ) {
 		float flExtent = 0.0f;
 		for ( const b3Vec3 &point : m_Points )
-			flExtent = std::max( flExtent, b3Dot( pPlanes[i].normal, b3Sub( point, center ) ) );
-		normals[i] = pPlanes[i].normal;
-		offsets[i] = flExtent + SHAPE_INFLATION;
-		dual[i] = b3MulSV( flScale / offsets[i], normals[i] );
-	}
+			flExtent = std::max( flExtent, b3Dot( normal, b3Sub( point, center ) ) );
+		normals.push_back( normal );
+		offsets.push_back( flExtent + SHAPE_INFLATION );
+		dual.push_back( b3MulSV( flScale / offsets.back(), normal ) );
+	};
+	for ( int i = 0; i < pBase->faceCount; ++i )
+		AddPlane( pPlanes[i].normal );
+
+	const b3Vec3 *pBasePoints = b3GetHullPoints( pBase );
+	std::vector<b3Vec3> basePoints( pBase->vertexCount );
+	for ( int i = 0; i < pBase->vertexCount; ++i )
+		basePoints[i] = b3Sub( pBasePoints[i], center );
 	b3DestroyHull( pBase );
 
-	std::vector<b3Vec3> points;
-	if ( b3HullData *pDual = b3CreateHull( dual.data(), static_cast<int>( dual.size() ), B3_MAX_HULL_VERTICES ) )
+	b3DistanceInput input = {};
+	input.proxyA = { basePoints.data(), static_cast<int>( basePoints.size() ), 0.0f };
+	input.transform = b3Transform_identity;
+
+	const float flTolerance = INTERSECTION_TOLERANCE * std::sqrt( flScale );
+	std::vector<b3Vec3> points, previousPoints;
+	for ( ;; )
 	{
+		b3HullData *pDual = b3CreateHull( dual.data(), static_cast<int>( dual.size() ), B3_MAX_HULL_VERTICES );
+		if ( !pDual )
+		{
+			points = previousPoints.empty() ? IntersectPlanes( normals, offsets, flTolerance ) : previousPoints;
+			break;
+		}
+
 		const b3Plane *pDualPlanes = b3GetHullPlanes( pDual );
 		points.resize( pDual->faceCount );
 		for ( int i = 0; i < pDual->faceCount; ++i )
 			points[i] = b3MulSV( flScale / pDualPlanes[i].offset, pDualPlanes[i].normal );
 		b3DestroyHull( pDual );
-	}
-	else
-	{
-		points = IntersectPlanes( normals, offsets, INTERSECTION_TOLERANCE * std::sqrt( flScale ) );
+
+		if ( !previousPoints.empty() )
+		{
+			bool bApplied = true;
+			for ( const b3Vec3 &point : points )
+				bApplied = bApplied && b3Dot( normals.back(), point ) <= offsets.back() + flTolerance;
+			if ( !bApplied )
+			{
+				points = previousPoints;
+				break;
+			}
+		}
+
+		float flWorst = 0.0f;
+		b3Vec3 normal = b3Vec3_zero;
+		b3Vec3 worst = b3Vec3_zero;
+		for ( const b3Vec3 &point : points )
+		{
+			input.proxyB = { &point, 1, 0.0f };
+			b3SimplexCache cache = {};
+			const b3DistanceOutput output = b3ShapeDistance( &input, &cache, nullptr, 0 );
+			if ( output.distance <= flWorst )
+				continue;
+
+			flWorst = output.distance;
+			normal = b3Normalize( b3Sub( point, output.pointA ) );
+			worst = point;
+		}
+		if ( flWorst <= MAX_HULL_GROWTH || points.size() > B3_MAX_HULL_VERTICES )
+			break;
+
+		AddPlane( normal );
+		if ( b3Dot( normal, worst ) <= offsets.back() + flTolerance )
+		{
+			normals.pop_back();
+			offsets.pop_back();
+			dual.pop_back();
+			break;
+		}
+		previousPoints = points;
 	}
 
 	for ( b3Vec3 &point : points )

@@ -37,6 +37,52 @@ add_library( vphysics SHARED
 	"${SOURCE_SDK_SRC}/public/tier0/memoverride.cpp"
 )
 
+add_library( tier1 STATIC
+	"${SOURCE_SDK_SRC}/tier1/characterset.cpp"
+	"${SOURCE_SDK_SRC}/tier1/convar.cpp"
+	"${SOURCE_SDK_SRC}/tier1/strtools.cpp"
+	"${SOURCE_SDK_SRC}/tier1/strtools_unicode.cpp"
+	"${SOURCE_SDK_SRC}/tier1/tier1.cpp"
+	"${SOURCE_SDK_SRC}/tier1/utlbuffer.cpp"
+	"${SOURCE_SDK_SRC}/tier1/utlstring.cpp"
+)
+if( NOT WIN32 )
+	target_sources( tier1 PRIVATE "${SOURCE_SDK_SRC}/tier1/qsort_s.cpp" )
+endif()
+target_link_libraries( tier1 PRIVATE source_sdk )
+target_compile_options( tier1 PRIVATE "$<IF:$<CXX_COMPILER_ID:MSVC>,/W0,-w>" )
+set_target_properties( tier1 PROPERTIES CXX_STANDARD 17 )
+
+find_package( Git QUIET )
+set( VPHYSICS_VERSION "unknown" )
+set( VPHYSICS_BOX3D_VERSION "unknown" )
+if( GIT_FOUND )
+	execute_process( COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE VPHYSICS_GIT_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE VPHYSICS_GIT_RESULT )
+	if( VPHYSICS_GIT_RESULT EQUAL 0 )
+		set( VPHYSICS_VERSION "${VPHYSICS_GIT_VERSION}" )
+	endif()
+	execute_process( COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/external/box3d" OUTPUT_VARIABLE VPHYSICS_GIT_BOX3D_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE VPHYSICS_GIT_BOX3D_RESULT )
+	if( VPHYSICS_GIT_BOX3D_RESULT EQUAL 0 )
+		set( VPHYSICS_BOX3D_VERSION "${VPHYSICS_GIT_BOX3D_VERSION}" )
+	endif()
+	execute_process( COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path logs/HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE VPHYSICS_GIT_LOG OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET )
+	get_filename_component( VPHYSICS_GIT_LOG "${VPHYSICS_GIT_LOG}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}" )
+	if( EXISTS "${VPHYSICS_GIT_LOG}" )
+		set_property( DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VPHYSICS_GIT_LOG}" )
+	endif()
+endif()
+
+if( VPHYSICS_DEDICATED )
+	set( VPHYSICS_PLATFORM "dedicated-linux" )
+elseif( WIN32 )
+	set( VPHYSICS_PLATFORM "windows" )
+else()
+	set( VPHYSICS_PLATFORM "linux" )
+endif()
+string( APPEND VPHYSICS_PLATFORM "$<IF:$<EQUAL:${CMAKE_SIZEOF_VOID_P},8>,-x64,-x86>" )
+
+set_source_files_properties( vphysics/physics.cpp PROPERTIES COMPILE_DEFINITIONS "VPHYSICS_VERSION=\"${VPHYSICS_VERSION}\";VPHYSICS_BOX3D_VERSION=\"${VPHYSICS_BOX3D_VERSION}\";VPHYSICS_PLATFORM=\"${VPHYSICS_PLATFORM}\"" )
+
 add_library( tier0 SHARED tier0/tier0.cpp )
 target_link_libraries( tier0 PRIVATE source_sdk )
 target_compile_definitions( tier0 PRIVATE TIER0_DLL_EXPORT )
@@ -49,7 +95,7 @@ set_target_properties( tier0 PROPERTIES
 
 target_include_directories( vphysics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} )
 find_package( Threads REQUIRED )
-target_link_libraries( vphysics PRIVATE source_sdk tier0 box3d::box3d qhull Threads::Threads )
+target_link_libraries( vphysics PRIVATE source_sdk tier0 tier1 box3d::box3d qhull Threads::Threads )
 
 set_source_files_properties( "${SOURCE_SDK_SRC}/public/tier0/memoverride.cpp" PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/W0,-w>" )
 

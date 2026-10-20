@@ -53,7 +53,20 @@ void DevMsg( const tchar *, ... )
 {
 }
 
+void ConMsg( const tchar *, ... )
+{
+}
+
+void ConColorMsg( const Color &, const tchar *, ... )
+{
+}
+
 const CPUInformation *GetCPUInformation()
+{
+	return nullptr;
+}
+
+struct tm *Plat_localtime( const time_t *, struct tm * )
 {
 	return nullptr;
 }

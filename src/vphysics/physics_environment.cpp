@@ -14,6 +14,7 @@
 #include "physics_surface_props.h"
 
 #include "tier0/dbg.h"
+#include "tier1/convar.h"
 #include "vphysics/constraints.h"
 
 #include "box3d/box3d.h"
@@ -183,14 +184,19 @@ static bool PreSolveShapes( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos, b3Vec3, v
 	return static_cast<CPhysicsEnvironment *>( pContext )->IsContactEnabled( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
 }
 
-static int GetPhysicalProcessorCount()
+static ConVar vbox_threads( "vbox_threads", "0", FCVAR_ARCHIVE, "Physics worker threads, 0 uses one per physical CPU core. Takes effect on the next map load", true, 0.0f, true, B3_MAX_WORKERS );
+
+static int GetWorkerCount()
 {
+	if ( vbox_threads.GetInt() > 0 )
+		return vbox_threads.GetInt();
+
 	return std::max( 1, static_cast<int>( GetCPUInformation()->m_nPhysicalProcessors ) );
 }
 
 CPhysicsEnvironment::CPhysicsEnvironment()
 : m_IVPGravity{ 0.0f, IVP_DEFAULT_GRAVITY, 0.0f }
-, m_TaskPool( GetPhysicalProcessorCount() )
+, m_TaskPool( GetWorkerCount() )
 {
 	b3WorldDef worldDef = b3DefaultWorldDef();
 	worldDef.gravity = ToBox3D( GetGravityVector() );

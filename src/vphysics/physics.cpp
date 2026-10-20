@@ -4,9 +4,15 @@
 #include "physics_environment.h"
 #include "physics_object_pair_hash.h"
 
+#include "tier1/convar.h"
 #include "tier1/interface.h"
 
 #include <algorithm>
+
+CON_COMMAND( vbox_version, "Prints the VPhysics Box3D version, Box3D revision and build platform" )
+{
+	Msg( "VPhysics Box3D %s (Box3D %s) %s\n", VPHYSICS_VERSION, VPHYSICS_BOX3D_VERSION, VPHYSICS_PLATFORM );
+}
 
 CPhysics g_Physics;
 

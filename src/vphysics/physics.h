@@ -1,6 +1,6 @@
 #pragma once
 
-#include "appframework/IAppSystem.h"
+#include "tier1/tier1.h"
 #include "vphysics_interface.h"
 #include "tier0/valve_minmax_off.h"
 
@@ -11,7 +11,7 @@
 class CPhysicsCollisionSet;
 class CPhysicsEnvironment;
 
-class CPhysics final : public CTier0AppSystem<IPhysics>
+class CPhysics final : public CTier1AppSystem<IPhysics>
 {
 public:
 	CPhysics();

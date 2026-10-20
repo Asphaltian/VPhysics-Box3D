@@ -113,4 +113,10 @@ else()
 	target_compile_options( vphysics PRIVATE -Wall -Wextra )
 	target_link_options( vphysics PRIVATE LINKER:--no-undefined "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/vphysics/vphysics.map" )
 	set_property( TARGET vphysics APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vphysics/vphysics.map" )
+	add_custom_command( TARGET vphysics POST_BUILD
+		COMMAND "${CMAKE_OBJCOPY}" --only-keep-debug "$<TARGET_FILE_NAME:vphysics>" "$<TARGET_FILE_NAME:vphysics>.debug"
+		COMMAND "${CMAKE_OBJCOPY}" --discard-all "--add-gnu-debuglink=$<TARGET_FILE_NAME:vphysics>.debug" "$<TARGET_FILE_NAME:vphysics>"
+		WORKING_DIRECTORY "$<TARGET_FILE_DIR:vphysics>"
+		VERBATIM
+	)
 endif()

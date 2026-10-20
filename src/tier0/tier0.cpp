@@ -32,6 +32,18 @@ void CallAssertFailedNotifyFunc( const char *, int, const char * )
 {
 }
 
+void _AssertValidReadPtr( void *, int )
+{
+}
+
+void _AssertValidWritePtr( void *, int )
+{
+}
+
+void AssertValidStringPtr( const tchar *, int )
+{
+}
+
 void Msg( const tchar *, ... )
 {
 }

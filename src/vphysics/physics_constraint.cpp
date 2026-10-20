@@ -558,6 +558,7 @@ CPhysicsConstraint *CPhysicsConstraint::CreateRagdoll( CPhysicsEnvironment *pEnv
 			hinge.hingeAxis.maxRotation = -ragdoll.axes[nFreeAxis].minRotation;
 		}
 		hinge.constraint = ragdoll.constraint;
+		hinge.constraint.strength = 1.0f;
 		return CreateHinge( pEnvironment, pReference, pAttached, pGroup, hinge );
 	}
 
@@ -852,7 +853,7 @@ void CPhysicsConstraint::BuildRagdoll( const constraint_ragdollparams_t &ragdoll
 	def.base.localFrameA = GetRagdollFrame( 0 );
 	def.base.localFrameB = GetRagdollFrame( 1 );
 	m_nJointType = b3_sphericalJoint;
-	m_Ragdoll.SetPlaneOnly( plane.m_bLimited );
+	m_Ragdoll.SetPlaneOnly( true );
 
 	if ( twist.m_bLimited )
 	{
@@ -1028,13 +1029,27 @@ void CPhysicsConstraint::SetupRows( const ConstraintStep_t &step )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Setup( bodies, step ); } );
 	else
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Ragdoll.Setup( bodies, step ); } );
+
+	if ( !HasJoint() || m_nJointType != b3_sphericalJoint )
+		return;
+
+	const b3SphericalJointDef &def = m_Definition.m_Spherical;
+	if ( def.enableConeLimit )
+		b3SphericalJoint_SetConeLimit( m_Joint, std::min( m_Ragdoll.GetSwingLimit(), 0.5f * PI ) );
+
+	if ( def.enableTwistLimit )
+	{
+		float flOffset = b3SphericalJoint_GetTwistAngle( m_Joint ) + m_Ragdoll.GetTwist();
+		flOffset -= flOffset > PI ? TWO_PI : ( flOffset < -PI ? -TWO_PI : 0.0f );
+		b3SphericalJoint_SetTwistLimits( m_Joint, def.lowerTwistAngle + flOffset, def.upperTwistAngle + flOffset );
+	}
 }
 
 void CPhysicsConstraint::SolveRows( float flAlpha, float flBeta, const ConstraintStep_t &step )
 {
 	if ( m_nType == CONSTRAINT_PULLEY )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Pulley.Solve( bodies, flAlpha, flBeta, step ); } );
-	else
+	else if ( m_Ragdoll.NeedsSolve() )
 		RunRows( [&]( ConstraintBody_t bodies[2] ) { m_Ragdoll.Solve( bodies, flAlpha, flBeta, step ); } );
 }
 

@@ -354,14 +354,8 @@ void CRagdollSolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &
 	const FloatMatrix_t rotations[2] = { ToFloat( bodies[0].m_pObject->GetCoreRotation() ), ToFloat( bodies[1].m_pObject->GetCoreRotation() ) };
 	const b3Vec3 coneReference = RotateColumns( rotations[0], m_Cone[0] );
 	const b3Vec3 twistAttached = RotateColumns( rotations[1], m_Twist[1] );
-	if ( m_bPlaneOnly )
-	{
-		BuildSwingRow( bodies, rotations, m_Rows[SLOT_PLANE], twistAttached, coneReference );
-		SolveSwing( bodies, SLOT_PLANE, 1.0f, 1.0f, step );
-		return;
-	}
-
 	const b3Vec3 twistReference = RotateColumns( rotations[0], m_Twist[0] );
+	m_flSwingCosine = Sum3( Multiply( twistAttached, twistReference ) );
 	const b3Vec3 coneAttached = RotateColumns( rotations[1], m_Cone[1] );
 
 	const b3Vec3 sum = b3Add( twistAttached, twistReference );
@@ -374,9 +368,20 @@ void CRagdollSolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &
 	const float flNormalSquared = Sum3( Multiply( normal, normal ) );
 	const b3Vec3 n = flNormalSquared > FLT_EPSILON ? b3MulSV( FastInverseSquareRoot( flNormalSquared ), normal ) : b3Vec3_zero;
 	const b3Vec3 tangent = { n.y * bisector.z - n.z * bisector.y, n.z * bisector.x - n.x * bisector.z, n.x * bisector.y - n.y * bisector.x };
+	const float flTwist = 0.0f - FastArcTangent( Sum3( Multiply( n, coneAttached ) ), Sum3( Multiply( tangent, coneAttached ) ) );
+	if ( m_bPlaneOnly )
+	{
+		m_Rows[SLOT_TWIST].m_flMeasure = flTwist;
+		if ( !m_Limits[SLOT_PLANE].m_bLimited )
+			return;
+
+		BuildSwingRow( bodies, rotations, m_Rows[SLOT_PLANE], twistAttached, coneReference );
+		SolveSwing( bodies, SLOT_PLANE, 1.0f, 1.0f, step );
+		return;
+	}
 
 	BuildRow( bodies, rotations, m_Rows[SLOT_TWIST], bisector );
-	m_Rows[SLOT_TWIST].m_flMeasure = 0.0f - FastArcTangent( Sum3( Multiply( n, coneAttached ) ), Sum3( Multiply( tangent, coneAttached ) ) );
+	m_Rows[SLOT_TWIST].m_flMeasure = flTwist;
 
 	BuildSwingRow( bodies, rotations, m_Rows[SLOT_PLANE], twistAttached, coneReference );
 	BuildSwingRow( bodies, rotations, m_Rows[SLOT_CONE], twistAttached, twistReference );
@@ -396,6 +401,20 @@ void CRagdollSolver::BuildSwingRow( ConstraintBody_t bodies[2], const FloatMatri
 
 	const float flScale = std::max( FastInverseSquareRoot( flCrossSquared ) * MIN_SWING_JACOBIAN, 1.0f );
 	BuildRow( bodies, rotations, row, b3MulSV( flScale, cross ) );
+}
+
+float CRagdollSolver::GetSwingLimit() const
+{
+	const float flConeLimit = std::acos( std::clamp( m_Limits[SLOT_CONE].m_flLower, -1.0f, 1.0f ) );
+	const Limit_t &plane = m_Limits[SLOT_PLANE];
+	const float flSine = std::sqrt( std::max( 1.0f - m_flSwingCosine * m_flSwingCosine, 0.0f ) );
+	if ( !plane.m_bLimited || flSine <= FLT_EPSILON )
+		return flConeLimit;
+
+	const float flAzimuthCosine = m_Rows[SLOT_PLANE].m_flMeasure / flSine;
+	const float flBound = flAzimuthCosine > 0.0f ? plane.m_flUpper / flAzimuthCosine : ( flAzimuthCosine < 0.0f ? plane.m_flLower / flAzimuthCosine : 1.0f );
+	const float flPlaneLimit = flBound >= 1.0f ? 0.5f * PI : std::asin( std::max( flBound, 0.0f ) );
+	return std::min( flConeLimit, flPlaneLimit );
 }
 
 void CRagdollSolver::Solve( ConstraintBody_t bodies[2], float flAlpha, float flBeta, const ConstraintStep_t &step )

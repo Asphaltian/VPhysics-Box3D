@@ -95,8 +95,13 @@ public:
 
 	bool IsPlaneOnly() const { return m_bPlaneOnly; }
 
+	bool NeedsSolve() const { return !m_bPlaneOnly || m_Limits[SLOT_PLANE].m_bLimited; }
+
 	void Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &step );
 	void Solve( ConstraintBody_t bodies[2], float flAlpha, float flBeta, const ConstraintStep_t &step );
+	float GetSwingLimit() const;
+
+	float GetTwist() const { return m_Rows[SLOT_TWIST].m_flMeasure; }
 
 	Limit_t &GetLimit( Slot_t nSlot ) { return m_Limits[nSlot]; }
 
@@ -125,5 +130,6 @@ private:
 	Limit_t m_Limits[SLOT_COUNT];
 	Row_t m_Rows[SLOT_COUNT] = {};
 	float m_flHalfSwingCosine = 0.0f;
+	float m_flSwingCosine = 1.0f;
 	bool m_bPlaneOnly = false;
 };

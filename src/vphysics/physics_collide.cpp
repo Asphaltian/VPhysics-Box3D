@@ -503,13 +503,50 @@ CPhysConvex::CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> tr
 
 static std::mutex s_LazyBuildMutex;
 
+static bool IsCoplanar( const std::vector<b3Vec3> &points, const std::vector<CPhysConvex::Triangle_t> &triangles )
+{
+	b3Vec3 extent = b3Vec3_zero;
+	for ( const b3Vec3 &point : points )
+		extent = b3Max( extent, b3Abs( point ) );
+
+	const float flMaxCoordinate = std::max( { extent.x, extent.y, extent.z } );
+	const float flMaxDistance = std::min( std::sqrt( 3.0f ) * flMaxCoordinate, extent.x + extent.y + extent.z );
+	const float flTolerance = ( 3.0f * flMaxDistance * 1.01f + flMaxCoordinate ) * FLT_EPSILON;
+
+	b3Vec3 normal = b3Vec3_zero;
+	b3Vec3 origin = b3Vec3_zero;
+	float flBestArea = 0.0f;
+	for ( const CPhysConvex::Triangle_t &triangle : triangles )
+	{
+		const b3Vec3 a = points[triangle.m_nVertices[0]];
+		const b3Vec3 cross = b3Cross( b3Sub( points[triangle.m_nVertices[1]], a ), b3Sub( points[triangle.m_nVertices[2]], a ) );
+		const float flArea = b3LengthSquared( cross );
+		if ( flArea <= flBestArea )
+			continue;
+
+		flBestArea = flArea;
+		normal = cross;
+		origin = a;
+	}
+	if ( flBestArea <= 0.0f )
+		return true;
+
+	normal = b3Normalize( normal );
+	for ( const b3Vec3 &point : points )
+	{
+		if ( std::fabs( b3Dot( normal, b3Sub( point, origin ) ) ) > 2.0f * flTolerance )
+			return false;
+	}
+	return true;
+}
+
 void CPhysConvex::ClassifyHull() const
 {
 	std::lock_guard lock( s_LazyBuildMutex );
 	if ( m_nHullState.load( std::memory_order_relaxed ) != HULL_UNCLASSIFIED )
 		return;
 
-	b3HullData *pBase = CreateHullWithVertexLimit( m_Points.data(), static_cast<int>( m_Points.size() ) );
+	b3HullData *pBase = IsCoplanar( m_Points, m_Triangles ) ? nullptr : CreateHullWithVertexLimit( m_Points.data(), static_cast<int>( m_Points.size() ) );
 	m_bFlat = !pBase;
 	if ( pBase )
 		m_pHull = CreateHull( pBase );

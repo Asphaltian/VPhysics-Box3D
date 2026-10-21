@@ -29,6 +29,7 @@
 
 static constexpr float DEFAULT_TIMESTEP = 1.0f / 66.0f;
 static constexpr float JOINT_HERTZ_FRACTION = 0.25f;
+static constexpr int STIFFEST_MODE_ITERATIONS = 16;
 static constexpr int PARALLEL_OBJECT_COUNT = 48;
 static constexpr float IVP_DEFAULT_GRAVITY = 9.83f;
 static constexpr float MAX_SIMULATE_DELTA = 1.0f;
@@ -745,33 +746,67 @@ void CPhysicsEnvironment::RemoveStiffnessUpdate( CPhysicsObject *pObject )
 		m_StiffnessObjects.erase( it );
 }
 
-static float ComputeStiffnessBudget( const CPhysicsObject *pObject, float flLimitSquared )
+static float ApplyStiffness( const CPhysicsObject *pObject, b3Vec3 linear, b3Vec3 angular, b3Vec3 &force, b3Vec3 &torque )
 {
-	static thread_local std::vector<float> s_Loads;
-	s_Loads.clear();
-	float flTotal = 0.0f;
+	force = b3Vec3_zero;
+	torque = b3Vec3_zero;
+	float flEnergy = 0.0f;
 	for ( const CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
 	{
-		const float flLoad = pConstraint->GetStiffnessLoad( pObject );
-		if ( flLoad > 0.0f )
+		const StiffnessCoupling_t &coupling = pConstraint->GetStiffnessCoupling( pObject );
+		const b3Vec3 velocity = b3Add( linear, b3Cross( angular, coupling.m_Lever ) );
+		const b3Vec3 linearForce = b3MulMV( coupling.m_Linear, velocity );
+		const b3Vec3 angularTorque = b3MulMV( coupling.m_Angular, angular );
+		force = b3Add( force, linearForce );
+		torque = b3Add( torque, b3Add( b3Cross( coupling.m_Lever, linearForce ), angularTorque ) );
+		flEnergy += b3Dot( velocity, linearForce ) + b3Dot( angular, angularTorque );
+	}
+	return flEnergy;
+}
+
+static float ComputeStiffnessScale( const CPhysicsObject *pObject, float flLimitSquared )
+{
+	const b3MassData massData = b3Body_GetMassData( pObject->GetBody() );
+	if ( !( massData.mass > 0.0f ) )
+		return 1.0f;
+
+	const b3Matrix3 inverseInertia = b3InvertMatrix( massData.inertia );
+	const auto getMass = [&]( b3Vec3 linear, b3Vec3 angular ) { return massData.mass * b3Dot( linear, linear ) + b3Dot( angular, b3MulMV( massData.inertia, angular ) ); };
+	const b3Vec3 axes[3] = { b3Vec3_axisX, b3Vec3_axisY, b3Vec3_axisZ };
+	b3Vec3 linear = b3Vec3_zero, angular = b3Vec3_zero, force, torque;
+	float flPeak = 0.0f;
+	for ( int i = 0; i < 6; ++i )
+	{
+		b3Vec3 axisLinear = i < 3 ? axes[i] : b3Vec3_zero;
+		b3Vec3 axisAngular = i < 3 ? b3Vec3_zero : b3MulMV( inverseInertia, axes[i - 3] );
+		const float flMass = getMass( axisLinear, axisAngular );
+		if ( !( flMass > 0.0f ) )
+			continue;
+
+		axisLinear = b3MulSV( 1.0f / std::sqrt( flMass ), axisLinear );
+		axisAngular = b3MulSV( 1.0f / std::sqrt( flMass ), axisAngular );
+		const float flEnergy = ApplyStiffness( pObject, axisLinear, axisAngular, force, torque );
+		if ( flEnergy > flPeak )
 		{
-			s_Loads.push_back( flLoad );
-			flTotal += flLoad;
+			flPeak = flEnergy;
+			linear = axisLinear;
+			angular = axisAngular;
 		}
 	}
-	if ( flTotal <= flLimitSquared )
-		return FLT_MAX;
 
-	std::sort( s_Loads.begin(), s_Loads.end() );
-	float flRemaining = flLimitSquared;
-	for ( size_t i = 0; i < s_Loads.size(); ++i )
+	for ( int i = 0; i < STIFFEST_MODE_ITERATIONS && flPeak > 0.0f; ++i )
 	{
-		const float flShare = flRemaining / static_cast<float>( s_Loads.size() - i );
-		if ( s_Loads[i] >= flShare )
-			return flShare;
-		flRemaining -= s_Loads[i];
+		flPeak = std::max( flPeak, ApplyStiffness( pObject, linear, angular, force, torque ) );
+		linear = b3MulSV( 1.0f / massData.mass, force );
+		angular = b3MulMV( inverseInertia, torque );
+		const float flMass = getMass( linear, angular );
+		if ( !( flMass > 0.0f ) )
+			break;
+
+		linear = b3MulSV( 1.0f / std::sqrt( flMass ), linear );
+		angular = b3MulSV( 1.0f / std::sqrt( flMass ), angular );
 	}
-	return FLT_MAX;
+	return flPeak > flLimitSquared ? flLimitSquared / flPeak : 1.0f;
 }
 
 void CPhysicsEnvironment::UpdateStiffnessBudgets()
@@ -786,7 +821,7 @@ void CPhysicsEnvironment::UpdateStiffnessBudgets()
 		pObject->ClearStiffnessQueued();
 		for ( CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
 		{
-			pConstraint->UpdateStiffnessShares();
+			pConstraint->UpdateStiffnessCoupling();
 			for ( CPhysicsObject *pBody : { pConstraint->GetReference(), pConstraint->GetAttached() } )
 			{
 				if ( pBody->IsStatic() || pBody->GetStiffnessPass() == m_nStiffnessPass )
@@ -801,7 +836,7 @@ void CPhysicsEnvironment::UpdateStiffnessBudgets()
 
 	const float flLimit = JOINT_HERTZ_FRACTION * GetSubstepRate();
 	for ( CPhysicsObject *pBody : m_StiffnessBodies )
-		pBody->SetStiffnessBudget( ComputeStiffnessBudget( pBody, flLimit * flLimit ) );
+		pBody->SetStiffnessScale( ComputeStiffnessScale( pBody, flLimit * flLimit ) );
 	for ( CPhysicsObject *pBody : m_StiffnessBodies )
 	{
 		for ( CPhysicsConstraint *pConstraint : pBody->GetConstraints() )

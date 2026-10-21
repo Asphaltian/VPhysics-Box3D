@@ -79,6 +79,13 @@ private:
 	bool m_bOrderDirty = false;
 };
 
+struct StiffnessCoupling_t
+{
+	b3Matrix3 m_Linear;
+	b3Matrix3 m_Angular;
+	b3Vec3 m_Lever;
+};
+
 class CPhysicsConstraint final : public IPhysicsConstraint
 {
 public:
@@ -133,6 +140,8 @@ public:
 
 	bool HasJoint() const { return B3_IS_NON_NULL( m_Joint ); }
 
+	b3JointType GetJointType() const { return m_nJointType; }
+
 	bool IsSolvedByRows() const { return m_nType == CONSTRAINT_PULLEY || m_nType == CONSTRAINT_LENGTH || m_nType == CONSTRAINT_SLIDING || ( m_nType == CONSTRAINT_RAGDOLL && ( m_bOnlyAngularLimits || m_Ragdoll.IsPlaneOnly() ) ); }
 
 	void SetupRows( const ConstraintStep_t &step );
@@ -144,9 +153,11 @@ public:
 	bool IsOverloaded( float flTimestep ) const;
 	float GetJointSeparation() const;
 	void ApplyHingeServo( const ConstraintStep_t &step );
-	void UpdateStiffnessShares();
+	void UpdateStiffnessCoupling();
 	void ApplyStiffnessBudget();
-	float GetStiffnessLoad( const CPhysicsObject *pObject ) const;
+
+	const StiffnessCoupling_t &GetStiffnessCoupling( const CPhysicsObject *pObject ) const { return m_StiffnessCoupling[pObject == m_pReference ? 0 : 1]; }
+
 	void ObjectDestroyed( CPhysicsObject *pObject );
 
 	void GroupDestroyed() { m_pGroup = nullptr; }
@@ -169,6 +180,7 @@ private:
 	void DetachObjects();
 	void NotifyWokenObjects() const;
 	float GetBreakMass( int nBody ) const;
+	void UpdateWeldAnchor();
 	float GetSlidePosition() const;
 	constraint_breakableparams_t GetSavedBreakableParams() const;
 
@@ -220,7 +232,7 @@ private:
 	float m_BodyMassScale[2] = { 1.0f, 1.0f };
 	float m_flBreakMass = -1.0f;
 	float m_flBreakSubstepRate = 0.0f;
-	float m_flStiffnessShares[2] = {};
+	StiffnessCoupling_t m_StiffnessCoupling[2] = {};
 	float m_flStiffnessHertz = 0.0f;
 	float m_flServoAngle = 0.0f;
 	Type_t m_nType;

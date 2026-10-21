@@ -294,9 +294,9 @@ public:
 
 	void SetStiffnessPass( uint32_t nPass ) { m_nStiffnessPass = nPass; }
 
-	float GetStiffnessBudget() const { return m_flStiffnessBudget; }
+	float GetStiffnessScale() const { return m_flStiffnessScale; }
 
-	void SetStiffnessBudget( float flBudget ) { m_flStiffnessBudget = flBudget; }
+	void SetStiffnessScale( float flScale ) { m_flStiffnessScale = flScale; }
 
 	std::vector<uint64_t> &GetContactKeys() { return m_ContactKeys; }
 
@@ -430,7 +430,7 @@ private:
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	float m_flFastDistance = 0.0f;
-	float m_flStiffnessBudget = FLT_MAX;
+	float m_flStiffnessScale = 1.0f;
 	uint32_t m_nStiffnessPass = 0;
 	float m_flMaxExtent = 0.0f;
 	uint32_t m_nPreStepCount = 0;

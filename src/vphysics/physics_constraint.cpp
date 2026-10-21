@@ -23,7 +23,6 @@ static constexpr float MIN_AXIS_RANGE = 1e-16f;
 static constexpr float LOCKED_CONE_ANGLE = 0.1f;
 static constexpr float PENETRATION_MIN_DISTANCE = 0.01f;
 static constexpr float IVP_TO_SOURCE_SQUARED = IVP_TO_SOURCE * IVP_TO_SOURCE;
-static constexpr int PEAK_SHARE_ITERATIONS = 8;
 
 static constexpr int IVP_TO_SOURCE_AXIS[3] = { 0, 2, 1 };
 static constexpr float CONE_UPPER_BOUND = 100.0f;
@@ -195,14 +194,22 @@ static b3Matrix3 GetLeverCompliance( const CPhysicsObject *pObject, b3Quat rotat
 	return b3MulMM( b3MulMM( basis, compliance ), b3Transpose( basis ) );
 }
 
-static void DecoupleWeldAnchor( b3JointDef &base, const CPhysicsObject *pReference, const CPhysicsObject *pAttached )
+static int GetSolvedJointCount( const CPhysicsObject *pObject )
+{
+	int nJoints = 0;
+	for ( const CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+		nJoints += pConstraint->HasJoint() && pConstraint->GetJointType() != b3_filterJoint;
+	return nJoints;
+}
+
+static void DecoupleWeldAnchor( b3JointDef &base, const CPhysicsObject *pReference, const CPhysicsObject *pAttached, float flReferenceWeight, float flAttachedWeight )
 {
 	if ( pReference->IsStatic() && pAttached->IsStatic() )
 		return;
 
 	const b3Transform frameA = base.localFrameA, frameB = base.localFrameB;
-	const b3Matrix3 complianceA = GetLeverCompliance( pReference, b3Quat_identity );
-	const b3Matrix3 complianceB = GetLeverCompliance( pAttached, b3MulQuat( frameA.q, b3Conjugate( frameB.q ) ) );
+	const b3Matrix3 complianceA = b3MulSM( flReferenceWeight, GetLeverCompliance( pReference, b3Quat_identity ) );
+	const b3Matrix3 complianceB = b3MulSM( flAttachedWeight, GetLeverCompliance( pAttached, b3MulQuat( frameA.q, b3Conjugate( frameB.q ) ) ) );
 	const b3Vec3 centerA = ToBox3D( pReference->GetMassCenterLocalSpace() );
 	const b3Vec3 centerB = b3TransformPoint( frameA, b3InvTransformPoint( frameB, ToBox3D( pAttached->GetMassCenterLocalSpace() ) ) );
 	base.localFrameA.p = b3MulMV( b3InvertMatrix( b3AddMM( complianceA, complianceB ) ), b3Add( b3MulMV( complianceA, centerA ), b3MulMV( complianceB, centerB ) ) );
@@ -231,26 +238,6 @@ static JointCompliance_t GetJointCompliance( b3BodyId body, b3Vec3 anchor )
 	const float flInverseMass = 1.0f / massData.mass;
 	const auto column = [&]( b3Vec3 axis ) { return b3MulAdd( b3Cross( b3MulMV( inverseInertia, b3Cross( lever, axis ) ), lever ), flInverseMass, axis ); };
 	return { { column( b3Vec3_axisX ), column( b3Vec3_axisY ), column( b3Vec3_axisZ ) }, inverseInertia };
-}
-
-static float GetPeakShare( const b3Matrix3 &part, const b3Matrix3 &total )
-{
-	if ( !( b3AbsFloat( b3Det( total ) ) > 0.0f ) )
-		return 0.0f;
-
-	const b3Matrix3 inverse = b3InvertMatrix( total );
-	b3Vec3 direction = part.cx;
-	for ( b3Vec3 column : { part.cy, part.cz } )
-	{
-		if ( b3LengthSquared( column ) > b3LengthSquared( direction ) )
-			direction = column;
-	}
-	if ( !( b3LengthSquared( direction ) > 0.0f ) )
-		return 0.0f;
-
-	for ( int i = 0; i < PEAK_SHARE_ITERATIONS; ++i )
-		direction = b3Normalize( b3MulMV( inverse, b3MulMV( part, direction ) ) );
-	return b3Dot( direction, b3MulMV( part, direction ) ) / b3Dot( direction, b3MulMV( total, direction ) );
 }
 
 CPhysicsConstraintGroup::CPhysicsConstraintGroup( CPhysicsEnvironment *pEnvironment, int nIterations, int nMinErrorTicks, float flErrorTolerance )
@@ -1188,7 +1175,6 @@ void CPhysicsConstraint::CreateJoint()
 		m_Joint = b3CreatePrismaticJoint( world, &def.m_Prismatic );
 		break;
 	case b3_weldJoint:
-		DecoupleWeldAnchor( base, m_pReference, m_pAttached );
 		m_Joint = b3CreateWeldJoint( world, &def.m_Weld );
 		break;
 	case b3_sphericalJoint:
@@ -1275,30 +1261,47 @@ void CPhysicsConstraint::ApplyHingeServo( const ConstraintStep_t &step )
 	}
 }
 
-void CPhysicsConstraint::UpdateStiffnessShares()
+void CPhysicsConstraint::UpdateWeldAnchor()
 {
-	m_flStiffnessShares[0] = 0.0f;
-	m_flStiffnessShares[1] = 0.0f;
+	JointDef_t def = m_Definition;
+	b3JointDef &base = def.m_Weld.base;
+	DecoupleWeldAnchor( base, m_pReference, m_pAttached, static_cast<float>( GetSolvedJointCount( m_pReference ) ), static_cast<float>( GetSolvedJointCount( m_pAttached ) ) );
+	b3Joint_SetLocalFrameA( m_Joint, base.localFrameA );
+	b3Joint_SetLocalFrameB( m_Joint, base.localFrameB );
+}
+
+void CPhysicsConstraint::UpdateStiffnessCoupling()
+{
+	m_StiffnessCoupling[0] = {};
+	m_StiffnessCoupling[1] = {};
 	if ( !HasJoint() || m_nJointType == b3_filterJoint )
 		return;
 
+	if ( m_nJointType == b3_weldJoint )
+		UpdateWeldAnchor();
+
 	m_flStiffnessHertz = GetBaseDefinition( m_Definition, m_nJointType ).constraintHertz;
 	const bool bAngular = m_nJointType == b3_weldJoint || m_nJointType == b3_revoluteJoint || m_nJointType == b3_prismaticJoint;
-	const JointCompliance_t compliance[2] = { GetJointCompliance( m_pReference->GetBody(), b3Joint_GetLocalFrameA( m_Joint ).p ), GetJointCompliance( m_pAttached->GetBody(), b3Joint_GetLocalFrameB( m_Joint ).p ) };
+	const b3BodyId bodies[2] = { m_pReference->GetBody(), m_pAttached->GetBody() };
+	const b3Vec3 anchors[2] = { b3Joint_GetLocalFrameA( m_Joint ).p, b3Joint_GetLocalFrameB( m_Joint ).p };
+	const JointCompliance_t compliance[2] = { GetJointCompliance( bodies[0], anchors[0] ), GetJointCompliance( bodies[1], anchors[1] ) };
 	const b3Matrix3 linear = b3AddMM( compliance[0].m_Linear, compliance[1].m_Linear );
 	const b3Matrix3 angular = b3AddMM( compliance[0].m_Angular, compliance[1].m_Angular );
+	if ( !( b3AbsFloat( b3Det( linear ) ) > 0.0f ) )
+		return;
+
+	const float flHertzSquared = m_flStiffnessHertz * m_flStiffnessHertz;
+	const b3Matrix3 linearStiffness = b3MulSM( flHertzSquared, b3InvertMatrix( linear ) );
+	const b3Matrix3 angularStiffness = bAngular && b3AbsFloat( b3Det( angular ) ) > 0.0f ? b3MulSM( flHertzSquared, b3InvertMatrix( angular ) ) : b3Mat3_zero;
 	for ( int i = 0; i < 2; ++i )
 	{
-		float flShare = GetPeakShare( compliance[i].m_Linear, linear );
-		if ( bAngular )
-			flShare = std::max( flShare, GetPeakShare( compliance[i].m_Angular, angular ) );
-		m_flStiffnessShares[i] = flShare;
-	}
-}
+		if ( b3Body_GetType( bodies[i] ) != b3_dynamicBody )
+			continue;
 
-float CPhysicsConstraint::GetStiffnessLoad( const CPhysicsObject *pObject ) const
-{
-	return m_flStiffnessShares[pObject == m_pReference ? 0 : 1] * m_flStiffnessHertz * m_flStiffnessHertz;
+		const b3Matrix3 basis = b3MakeMatrixFromQuat( b3Body_GetRotation( bodies[i] ) );
+		const b3Matrix3 inverse = b3Transpose( basis );
+		m_StiffnessCoupling[i] = { b3MulMM( b3MulMM( inverse, linearStiffness ), basis ), b3MulMM( b3MulMM( inverse, angularStiffness ), basis ), b3Sub( anchors[i], b3Body_GetMassData( bodies[i] ).center ) };
+	}
 }
 
 void CPhysicsConstraint::ApplyStiffnessBudget()
@@ -1306,14 +1309,8 @@ void CPhysicsConstraint::ApplyStiffnessBudget()
 	if ( !HasJoint() || m_nJointType == b3_filterJoint )
 		return;
 
-	float flHertzSquared = m_flStiffnessHertz * m_flStiffnessHertz;
-	const CPhysicsObject *const objects[2] = { m_pReference, m_pAttached };
-	for ( int i = 0; i < 2; ++i )
-	{
-		if ( m_flStiffnessShares[i] > 0.0f )
-			flHertzSquared = std::min( flHertzSquared, objects[i]->GetStiffnessBudget() / m_flStiffnessShares[i] );
-	}
-	b3Joint_SetConstraintTuning( m_Joint, std::sqrt( flHertzSquared ), GetBaseDefinition( m_Definition, m_nJointType ).constraintDampingRatio );
+	const float flScale = std::min( m_pReference->GetStiffnessScale(), m_pAttached->GetStiffnessScale() );
+	b3Joint_SetConstraintTuning( m_Joint, m_flStiffnessHertz * std::sqrt( flScale ), GetBaseDefinition( m_Definition, m_nJointType ).constraintDampingRatio );
 }
 
 float CPhysicsConstraint::GetBreakMass( int nBody ) const

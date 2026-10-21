@@ -10,6 +10,7 @@
 #include "box3d/id.h"
 #include "box3d/math_functions.h"
 
+#include <cfloat>
 #include <string>
 #include <vector>
 
@@ -283,6 +284,20 @@ public:
 	void AttachSpring( CPhysicsSpring *pSpring );
 	void DetachSpring( CPhysicsSpring *pSpring );
 
+	const std::vector<CPhysicsConstraint *> &GetConstraints() const { return m_Constraints; }
+
+	void QueueStiffnessUpdate();
+
+	void ClearStiffnessQueued() { m_bStiffnessQueued = false; }
+
+	uint32_t GetStiffnessPass() const { return m_nStiffnessPass; }
+
+	void SetStiffnessPass( uint32_t nPass ) { m_nStiffnessPass = nPass; }
+
+	float GetStiffnessBudget() const { return m_flStiffnessBudget; }
+
+	void SetStiffnessBudget( float flBudget ) { m_flStiffnessBudget = flBudget; }
+
 	std::vector<uint64_t> &GetContactKeys() { return m_ContactKeys; }
 
 	const std::vector<uint64_t> &GetContactKeys() const { return m_ContactKeys; }
@@ -415,6 +430,8 @@ private:
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
 	float m_flFastDistance = 0.0f;
+	float m_flStiffnessBudget = FLT_MAX;
+	uint32_t m_nStiffnessPass = 0;
 	float m_flMaxExtent = 0.0f;
 	uint32_t m_nPreStepCount = 0;
 	int m_nControllerCursor = -1;
@@ -485,6 +502,7 @@ private:
 	bool m_bShadowTempGravityDisable = false;
 	bool m_bPendingVelocity = false;
 	bool m_bVelocityFlushQueued = false;
+	bool m_bStiffnessQueued = false;
 	bool m_bQueuedAsWoken = false;
 	bool m_bHasFilterBounds = false;
 	bool m_bCoreVelocityValid = false;

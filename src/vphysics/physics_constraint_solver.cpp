@@ -8,10 +8,10 @@
 #include <cmath>
 #include <numbers>
 
-static constexpr float SERVO_GAIN = 0.8f;
 static constexpr float MIN_SWING_JACOBIAN = 0.1f;
 static constexpr float SLACK_LOOK_AHEAD = 0.01f;
-static constexpr float PULLEY_LENGTH_BIAS = 1e-18f;
+static constexpr float LENGTH_BIAS = 1e-18f;
+static constexpr float LENGTH_VELOCITY_GAIN = 0.5f;
 static constexpr float MAX_ROTATION_STEP = 0.997f;
 static constexpr float HALF_PI = 0.5f * std::numbers::pi_v<float>;
 static constexpr float QUARTER_PI = 0.25f * std::numbers::pi_v<float>;
@@ -99,6 +99,54 @@ static b3Vec3 GetAnchorPoint( const DoubleMatrix3_t &rotation, DoubleVec3_t posi
 	return ToFloat( Rotate( rotation, anchor ) + ( Rotate( rotation, shift ) + position ) );
 }
 
+static b3Vec3 PredictAnchor( const CPhysicsObject *pObject, const ConstraintStep_t &step, b3Vec3 anchor )
+{
+	const b3Vec3 w = pObject->GetCoreAngularVelocity();
+	const float flHalfStep = step.m_flTimestep * 0.5f;
+	b3Vec3 d = { std::sin( flHalfStep * w.x ), std::sin( flHalfStep * w.y ), std::sin( flHalfStep * w.z ) };
+	float flLengthSquared = ( d.x * d.x + d.y * d.y ) + d.z * d.z;
+	if ( flLengthSquared > 1.0f )
+	{
+		d = b3MulSV( MAX_ROTATION_STEP / std::sqrt( flLengthSquared ), d );
+		flLengthSquared = ( d.x * d.x + d.y * d.y ) + d.z * d.z;
+	}
+
+	const DoubleQuat_t delta = { d.x, d.y, d.z, std::sqrt( 1.0f - flLengthSquared ) };
+	const DoubleMatrix3_t rotation = QuatToMatrix( NormalizeQuat( MultiplyQuat( pObject->GetNextRotation(), delta ) ) );
+	const b3Vec3 s = pObject->GetCoreVelocity();
+	const DoubleVec3_t position = pObject->GetCorePosition();
+	const double dt = step.m_flTimestep;
+	return GetAnchorPoint( rotation, { dt * s.x + position.x, dt * s.y + position.y, dt * s.z + position.z }, pObject->GetShift(), anchor );
+}
+
+static b3Vec3 ToCoreAxis( const DoubleMatrix3_t &rotation, b3Vec3 x )
+{
+	const auto &m = rotation.m;
+	const double flX = x.x, flY = x.y, flZ = x.z;
+	return {
+		static_cast<float>( ( flY * m[1][0] + flX * m[0][0] ) + flZ * m[2][0] ),
+		static_cast<float>( ( flY * m[1][1] + flX * m[0][1] ) + flZ * m[2][1] ),
+		static_cast<float>( ( flY * m[1][2] + flX * m[0][2] ) + flZ * m[2][2] ),
+	};
+}
+
+static float MeasureLength( b3Vec3 delta )
+{
+	return std::sqrt( ( delta.y * delta.y + delta.x * delta.x ) + delta.z * delta.z );
+}
+
+static float GetRowVelocity( const ConstraintBody_t bodies[2], const b3Vec3 linear[2], const b3Vec3 angular[2] )
+{
+	float flVelocity = 0.0f;
+	for ( int i = 0; i < 2; ++i )
+	{
+		const b3Vec3 s = bodies[i].m_pObject->GetCoreVelocity();
+		const b3Vec3 w = bodies[i].m_pObject->GetCoreAngularVelocity();
+		flVelocity = ( Sum3( Multiply( linear[i], s ) ) + flVelocity ) + Sum3( Multiply( angular[i], w ) );
+	}
+	return flVelocity;
+}
+
 void CPulleySolver::Initialize( const b3Vec3 anchors[2], const b3Vec3 pulleys[2], float flLength, float flGearRatio, float flStrength, bool bRigid )
 {
 	for ( int i = 0; i < 2; ++i )
@@ -122,37 +170,14 @@ float CPulleySolver::MeasureError( const b3Vec3 points[2], b3Vec3 directions[2] 
 			delta = b3MulSV( m_flGearRatio, delta );
 		flLengths[i] = std::sqrt( ( delta.y * delta.y + delta.x * delta.x ) + delta.z * delta.z );
 		if ( directions )
-			directions[i] = b3MulSV( 1.0f / ( flLengths[i] + PULLEY_LENGTH_BIAS ), delta );
+			directions[i] = b3MulSV( 1.0f / ( flLengths[i] + LENGTH_BIAS ), delta );
 	}
 	return ( flLengths[0] + flLengths[1] ) - m_flLength;
 }
 
 bool CPulleySolver::IsSlackAhead( ConstraintBody_t bodies[2], const ConstraintStep_t &step ) const
 {
-	DoubleMatrix3_t rotations[2];
-	DoubleVec3_t positions[2];
-	b3Vec3 points[2];
-	for ( int i = 0; i < 2; ++i )
-	{
-		const CPhysicsObject *pObject = bodies[i].m_pObject;
-		const b3Vec3 w = pObject->GetCoreAngularVelocity();
-		const float flHalfStep = step.m_flTimestep * 0.5f;
-		b3Vec3 d = { std::sin( flHalfStep * w.x ), std::sin( flHalfStep * w.y ), std::sin( flHalfStep * w.z ) };
-		float flLengthSquared = ( d.x * d.x + d.y * d.y ) + d.z * d.z;
-		if ( flLengthSquared > 1.0f )
-		{
-			d = b3MulSV( MAX_ROTATION_STEP / std::sqrt( flLengthSquared ), d );
-			flLengthSquared = ( d.x * d.x + d.y * d.y ) + d.z * d.z;
-		}
-
-		const DoubleQuat_t delta = { d.x, d.y, d.z, std::sqrt( 1.0f - flLengthSquared ) };
-		rotations[i] = QuatToMatrix( NormalizeQuat( MultiplyQuat( pObject->GetNextRotation(), delta ) ) );
-		const b3Vec3 s = pObject->GetCoreVelocity();
-		const DoubleVec3_t position = pObject->GetCorePosition();
-		const double dt = step.m_flTimestep;
-		positions[i] = { dt * s.x + position.x, dt * s.y + position.y, dt * s.z + position.z };
-		points[i] = GetAnchorPoint( rotations[i], positions[i], pObject->GetShift(), m_Anchors[i] );
-	}
+	const b3Vec3 points[2] = { PredictAnchor( bodies[0].m_pObject, step, m_Anchors[0] ), PredictAnchor( bodies[1].m_pObject, step, m_Anchors[1] ) };
 	return MeasureError( points, nullptr ) < m_flLength * SLACK_LOOK_AHEAD;
 }
 
@@ -239,6 +264,187 @@ void CPulleySolver::Solve( ConstraintBody_t bodies[2], float flAlpha, float flBe
 		flVelocity = ( ( n.y * s.y + n.x * s.x ) + ( n.z * s.z + flVelocity ) ) + ( ( a.x * w.x + a.z * w.z ) + a.y * w.y );
 	}
 	Apply( bodies, ( ( m_flError * step.m_flInverseTimestep ) * ( flAlpha * m_flStrength ) - ( flBeta * 1.0f ) * flVelocity ) * m_flEffectiveMass );
+}
+
+void CLengthSolver::Initialize( const b3Vec3 anchors[2], float flMinLength, float flMaxLength, float flStrength )
+{
+	m_Anchors[0] = anchors[0];
+	m_Anchors[1] = anchors[1];
+	m_flMinLength = flMinLength;
+	m_flMaxLength = flMaxLength;
+	m_flStrength = flStrength;
+}
+
+bool CLengthSolver::IsOutsideAhead( ConstraintBody_t bodies[2], const ConstraintStep_t &step ) const
+{
+	const float flLength = MeasureLength( b3Sub( PredictAnchor( bodies[1].m_pObject, step, m_Anchors[1] ), PredictAnchor( bodies[0].m_pObject, step, m_Anchors[0] ) ) );
+	return flLength < m_flMinLength || flLength > m_flMaxLength;
+}
+
+void CLengthSolver::Apply( ConstraintBody_t bodies[2], float flImpulse ) const
+{
+	for ( int i = 0; i < 2; ++i )
+	{
+		const ConstraintBody_t &body = bodies[i];
+		if ( !body.m_bDynamic )
+			continue;
+
+		const float flLinear = flImpulse * body.m_flInverseMass;
+		const b3Vec3 s = body.m_pObject->GetCoreVelocity();
+		const b3Vec3 w = body.m_pObject->GetCoreAngularVelocity();
+		body.m_pObject->SetCoreVelocity( { flLinear * m_Linear[i].x + s.x, flLinear * m_Linear[i].y + s.y, flLinear * m_Linear[i].z + s.z } );
+		body.m_pObject->SetCoreAngularVelocity( { flImpulse * m_Response[i].x + w.x, flImpulse * m_Response[i].y + w.y, flImpulse * m_Response[i].z + w.z } );
+	}
+}
+
+void CLengthSolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &step )
+{
+	DoubleMatrix3_t rotations[2];
+	b3Vec3 centers[2], points[2];
+	for ( int i = 0; i < 2; ++i )
+	{
+		const CPhysicsObject *pObject = bodies[i].m_pObject;
+		rotations[i] = pObject->GetCoreRotation();
+		const DoubleVec3_t position = pObject->GetCorePosition();
+		centers[i] = ToFloat( position );
+		points[i] = GetAnchorPoint( rotations[i], position, pObject->GetShift(), m_Anchors[i] );
+	}
+
+	const b3Vec3 delta = b3Sub( points[1], points[0] );
+	const float flLength = MeasureLength( delta );
+	m_flError = flLength < m_flMinLength ? flLength - m_flMinLength : ( flLength > m_flMaxLength ? flLength - m_flMaxLength : 0.0f );
+	m_bActive = m_flMinLength == m_flMaxLength || m_flError != 0.0f || IsOutsideAhead( bodies, step );
+	if ( !m_bActive )
+		return;
+
+	const float flInverseLength = 1.0f / ( flLength + LENGTH_BIAS );
+	m_Linear[0] = { delta.x * flInverseLength, delta.y * flInverseLength, delta.z * flInverseLength };
+	m_Linear[1] = Negate( m_Linear[0] );
+	const b3Vec3 levers[2] = { b3Sub( points[0], centers[0] ), b3Sub( centers[1], points[0] ) };
+	const b3Vec3 n = m_Linear[0];
+	float flInverseEffectiveMass = 0.0f;
+	for ( int i = 0; i < 2; ++i )
+	{
+		const b3Vec3 &r = levers[i];
+		m_Angular[i] = ToCoreAxis( rotations[i], { n.z * r.y - r.z * n.y, n.x * r.z - r.x * n.z, n.y * r.x - r.y * n.x } );
+
+		const ConstraintBody_t &body = bodies[i];
+		if ( !body.m_bDynamic )
+		{
+			m_Response[i] = b3Vec3_zero;
+			continue;
+		}
+
+		m_Response[i] = Multiply( m_Angular[i], body.m_InverseInertia );
+		flInverseEffectiveMass = ( Sum3( Multiply( m_Linear[i], m_Linear[i] ) ) * body.m_flInverseMass + flInverseEffectiveMass ) + Sum3( Multiply( m_Angular[i], m_Response[i] ) );
+	}
+
+	m_flEffectiveMass = 1.0f / flInverseEffectiveMass;
+	Solve( bodies, 1.0f, 1.0f, step );
+}
+
+void CLengthSolver::Solve( ConstraintBody_t bodies[2], float flAlpha, float flBeta, const ConstraintStep_t &step )
+{
+	if ( !m_bActive )
+		return;
+
+	const float flVelocity = GetRowVelocity( bodies, m_Linear, m_Angular );
+	Apply( bodies, ( ( ( m_flStrength * m_flError ) * flAlpha ) * step.m_flInverseTimestep - ( flBeta * LENGTH_VELOCITY_GAIN ) * flVelocity ) * m_flEffectiveMass );
+}
+
+void CSlidingSolver::Initialize( b3Vec3 axis, float flWeight, float flLower, float flUpper, bool bLimited, float flReference )
+{
+	m_Axis = axis;
+	m_flWeight = flWeight;
+	m_flLower = flLower;
+	m_flUpper = flUpper;
+	m_bLimited = bLimited;
+	m_flReference = flReference;
+}
+
+void CSlidingSolver::SetMotor( float flTargetSpeed, float flMaxForce, bool bActive )
+{
+	m_flTargetSpeed = flTargetSpeed;
+	m_flMaxForce = flMaxForce;
+	m_bMotor = bActive;
+}
+
+void CSlidingSolver::Solve( ConstraintBody_t bodies[2], float flAlpha, float flBeta, const ConstraintStep_t &step )
+{
+	float flVelocity = GetRowVelocity( bodies, m_Linear, m_Angular );
+	float flImpulse = 0.0f;
+	if ( m_bMotor )
+	{
+		const float flError = m_flPosition - m_flReference;
+		const float flReference = m_flTargetSpeed * step.m_flTimestep + m_flReference;
+		m_flReference = flReference;
+		flImpulse = ( ( ( flError * step.m_flInverseTimestep ) * flAlpha ) * SERVO_GAIN - flBeta * flVelocity ) * m_flEffectiveMass;
+		if ( m_flMaxForce < step.m_flInverseTimestep * std::fabs( flImpulse ) )
+		{
+			const float flScale = ( m_flMaxForce / std::fabs( flImpulse ) ) * step.m_flTimestep;
+			flImpulse *= flScale;
+			m_flReference = flError * ( 1.0f - flScale ) + flReference;
+		}
+		flVelocity += m_flInverseEffectiveMass * flImpulse;
+	}
+
+	if ( m_bLimited )
+	{
+		const float flPredicted = m_flPosition - flVelocity * step.m_flTimestep;
+		if ( flPredicted > m_flUpper )
+			flImpulse += ( ( flPredicted - m_flUpper ) * flAlpha ) * m_flEffectiveMass * step.m_flInverseTimestep;
+		else if ( flPredicted < m_flLower )
+			flImpulse += ( ( flPredicted - m_flLower ) * flAlpha ) * m_flEffectiveMass * step.m_flInverseTimestep;
+	}
+
+	if ( flImpulse == 0.0f )
+		return;
+
+	for ( int i = 0; i < 2; ++i )
+	{
+		const ConstraintBody_t &body = bodies[i];
+		if ( !body.m_bDynamic )
+			continue;
+
+		const float flLinear = flImpulse * body.m_flInverseMass;
+		const b3Vec3 s = body.m_pObject->GetCoreVelocity();
+		body.m_pObject->SetCoreVelocity( { flLinear * m_Linear[i].x + s.x, flLinear * m_Linear[i].y + s.y, flLinear * m_Linear[i].z + s.z } );
+	}
+}
+
+void CSlidingSolver::Setup( ConstraintBody_t bodies[2], const ConstraintStep_t &step, float flPosition )
+{
+	DoubleMatrix3_t rotations[2];
+	b3Vec3 centers[2];
+	for ( int i = 0; i < 2; ++i )
+	{
+		rotations[i] = bodies[i].m_pObject->GetCoreRotation();
+		centers[i] = ToFloat( bodies[i].m_pObject->GetCorePosition() );
+	}
+
+	const b3Vec3 n = ToFloat( Rotate( rotations[0], m_Axis ) );
+	const float flComplement = 1.0f - m_flWeight;
+	const b3Vec3 anchor = { flComplement * centers[0].x + m_flWeight * centers[1].x, flComplement * centers[0].y + m_flWeight * centers[1].y, flComplement * centers[0].z + m_flWeight * centers[1].z };
+	const b3Vec3 levers[2] = { b3Sub( anchor, centers[0] ), b3Sub( centers[1], anchor ) };
+	m_Linear[0] = n;
+	m_Linear[1] = Negate( n );
+	m_flPosition = flPosition;
+	m_flInverseEffectiveMass = 0.0f;
+	for ( int i = 0; i < 2; ++i )
+	{
+		const b3Vec3 &r = levers[i];
+		m_Angular[i] = ToCoreAxis( rotations[i], { n.z * r.y - r.z * n.y, n.x * r.z - r.x * n.z, n.y * r.x - r.y * n.x } );
+
+		const ConstraintBody_t &body = bodies[i];
+		if ( !body.m_bDynamic )
+			continue;
+
+		const b3Vec3 response = Multiply( m_Angular[i], body.m_InverseInertia );
+		m_flInverseEffectiveMass = ( Sum3( Multiply( m_Linear[i], m_Linear[i] ) ) * body.m_flInverseMass + m_flInverseEffectiveMass ) + Sum3( Multiply( m_Angular[i], response ) );
+	}
+
+	m_flEffectiveMass = 1.0f / m_flInverseEffectiveMass;
+	Solve( bodies, 1.0f, 1.0f, step );
 }
 
 void CRagdollSolver::SetAxes( int nBody, b3Vec3 twist, b3Vec3 cone )

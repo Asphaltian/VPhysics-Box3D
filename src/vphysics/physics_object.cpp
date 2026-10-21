@@ -581,6 +581,15 @@ void CPhysicsObject::QueueVelocityFlush()
 	}
 }
 
+void CPhysicsObject::QueueStiffnessUpdate()
+{
+	if ( m_bStatic || m_bStiffnessQueued )
+		return;
+
+	m_bStiffnessQueued = true;
+	m_pEnvironment->QueueStiffnessUpdate( this );
+}
+
 b3Vec3 CPhysicsObject::GetBodyAngularVelocity( b3Vec3 coreAngular ) const
 {
 	return b3RotateVector( IVPToBox3D( m_NextRotation ), { coreAngular.x, coreAngular.z, -coreAngular.y } );
@@ -944,6 +953,8 @@ CPhysicsObject::~CPhysicsObject()
 		m_pEnvironment->RemovePendingVelocity( this );
 	if ( m_bVelocityFlushQueued )
 		m_pEnvironment->RemoveVelocityFlush( this );
+	if ( m_bStiffnessQueued )
+		m_pEnvironment->RemoveStiffnessUpdate( this );
 	b3DestroyBody( m_Body );
 }
 
@@ -1854,6 +1865,8 @@ void CPhysicsObject::UpdateInverseMass()
 void CPhysicsObject::UpdateMassData()
 {
 	ApplyMassData();
+	if ( !m_Constraints.empty() )
+		QueueStiffnessUpdate();
 	m_flFastDistance = b3Body_GetSafetyFactor( m_Body ) * b3Body_GetMinExtent( m_Body );
 	m_flMaxExtent = b3Length( b3Body_GetMaxExtent( m_Body ) );
 }

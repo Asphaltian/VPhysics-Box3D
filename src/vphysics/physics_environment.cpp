@@ -28,6 +28,7 @@
 #include <tuple>
 
 static constexpr float DEFAULT_TIMESTEP = 1.0f / 66.0f;
+static constexpr float JOINT_HERTZ_FRACTION = 0.25f;
 static constexpr int PARALLEL_OBJECT_COUNT = 48;
 static constexpr float IVP_DEFAULT_GRAVITY = 9.83f;
 static constexpr float MAX_SIMULATE_DELTA = 1.0f;
@@ -602,6 +603,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	DetectPendingPenetrationHolds();
 	ApplyPenetrationResets();
 
+	UpdateStiffnessBudgets();
 	m_TaskPool.Reset();
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
 	m_TaskPool.SetActive( false );
@@ -609,7 +611,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	m_flNextStepTime = flTime + static_cast<double>( m_flTimestep );
 
 	ResolvePendingFilterPairs();
-	ProcessJointEvents();
+	ProcessConstraintBreaks();
 
 	m_SteppedObjects.clear();
 	std::vector<CPhysicsObject *> woken;
@@ -656,24 +658,39 @@ void CPhysicsEnvironment::Step( double flTime )
 	ProcessPenetration();
 }
 
-void CPhysicsEnvironment::ProcessJointEvents()
+void CPhysicsEnvironment::ProcessConstraintBreaks()
 {
-	const b3JointEvents events = b3World_GetJointEvents( m_World );
-	if ( events.count == 0 || !m_pConstraintEvents )
+	if ( !m_pConstraintEvents || m_BreakableConstraints.empty() )
 		return;
 
 	m_BrokenConstraints.clear();
+	const b3JointEvents events = b3World_GetJointEvents( m_World );
 	for ( int i = 0; i < events.count; ++i )
 	{
 		if ( events.jointEvents[i].userData )
 			m_BrokenConstraints.push_back( static_cast<CPhysicsConstraint *>( events.jointEvents[i].userData ) );
 	}
 
+	const size_t nPeakBreaks = m_BrokenConstraints.size();
+	for ( CPhysicsConstraint *pConstraint : m_BreakableConstraints )
+	{
+		pConstraint->UpdateBreakThresholds();
+		if ( pConstraint->IsOverloaded( m_flTimestep ) && std::find( m_BrokenConstraints.begin(), m_BrokenConstraints.begin() + nPeakBreaks, pConstraint ) == m_BrokenConstraints.begin() + nPeakBreaks )
+			m_BrokenConstraints.push_back( pConstraint );
+	}
+
 	for ( CPhysicsConstraint *pConstraint : m_BrokenConstraints )
 	{
-		if ( pConstraint->HasJoint() && m_pConstraintEvents )
+		if ( m_pConstraintEvents && std::find( m_BreakableConstraints.begin(), m_BreakableConstraints.end(), pConstraint ) != m_BreakableConstraints.end() )
 			m_pConstraintEvents->ConstraintBroken( pConstraint );
 	}
+}
+
+void CPhysicsEnvironment::RemoveBreakableConstraint( CPhysicsConstraint *pConstraint )
+{
+	auto it = std::find( m_BreakableConstraints.begin(), m_BreakableConstraints.end(), pConstraint );
+	if ( it != m_BreakableConstraints.end() )
+		m_BreakableConstraints.erase( it );
 }
 
 void CPhysicsEnvironment::NotifyWoken( CPhysicsObject *pObject )
@@ -719,6 +736,77 @@ void CPhysicsEnvironment::RemoveVelocityFlush( CPhysicsObject *pObject )
 	auto it = std::find( m_VelocityFlushObjects.begin(), m_VelocityFlushObjects.end(), pObject );
 	if ( it != m_VelocityFlushObjects.end() )
 		m_VelocityFlushObjects.erase( it );
+}
+
+void CPhysicsEnvironment::RemoveStiffnessUpdate( CPhysicsObject *pObject )
+{
+	auto it = std::find( m_StiffnessObjects.begin(), m_StiffnessObjects.end(), pObject );
+	if ( it != m_StiffnessObjects.end() )
+		m_StiffnessObjects.erase( it );
+}
+
+static float ComputeStiffnessBudget( const CPhysicsObject *pObject, float flLimitSquared )
+{
+	static thread_local std::vector<float> s_Loads;
+	s_Loads.clear();
+	float flTotal = 0.0f;
+	for ( const CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+	{
+		const float flLoad = pConstraint->GetStiffnessLoad( pObject );
+		if ( flLoad > 0.0f )
+		{
+			s_Loads.push_back( flLoad );
+			flTotal += flLoad;
+		}
+	}
+	if ( flTotal <= flLimitSquared )
+		return FLT_MAX;
+
+	std::sort( s_Loads.begin(), s_Loads.end() );
+	float flRemaining = flLimitSquared;
+	for ( size_t i = 0; i < s_Loads.size(); ++i )
+	{
+		const float flShare = flRemaining / static_cast<float>( s_Loads.size() - i );
+		if ( s_Loads[i] >= flShare )
+			return flShare;
+		flRemaining -= s_Loads[i];
+	}
+	return FLT_MAX;
+}
+
+void CPhysicsEnvironment::UpdateStiffnessBudgets()
+{
+	if ( m_StiffnessObjects.empty() )
+		return;
+
+	++m_nStiffnessPass;
+	m_StiffnessBodies.clear();
+	for ( CPhysicsObject *pObject : m_StiffnessObjects )
+	{
+		pObject->ClearStiffnessQueued();
+		for ( CPhysicsConstraint *pConstraint : pObject->GetConstraints() )
+		{
+			pConstraint->UpdateStiffnessShares();
+			for ( CPhysicsObject *pBody : { pConstraint->GetReference(), pConstraint->GetAttached() } )
+			{
+				if ( pBody->IsStatic() || pBody->GetStiffnessPass() == m_nStiffnessPass )
+					continue;
+
+				pBody->SetStiffnessPass( m_nStiffnessPass );
+				m_StiffnessBodies.push_back( pBody );
+			}
+		}
+	}
+	m_StiffnessObjects.clear();
+
+	const float flLimit = JOINT_HERTZ_FRACTION * GetSubstepRate();
+	for ( CPhysicsObject *pBody : m_StiffnessBodies )
+		pBody->SetStiffnessBudget( ComputeStiffnessBudget( pBody, flLimit * flLimit ) );
+	for ( CPhysicsObject *pBody : m_StiffnessBodies )
+	{
+		for ( CPhysicsConstraint *pConstraint : pBody->GetConstraints() )
+			pConstraint->ApplyStiffnessBudget();
+	}
 }
 
 static uint32_t s_nSleepSeed = 1;
@@ -944,6 +1032,12 @@ void CPhysicsEnvironment::SetSimulationTimestep( float timestep )
 	m_flTimestep = timestep;
 	m_flInverseTimestep = static_cast<float>( 1.0 / static_cast<double>( timestep ) );
 	UpdateContactTuning();
+	for ( IPhysicsObject *pObject : m_Objects )
+	{
+		CPhysicsObject *pPhysicsObject = static_cast<CPhysicsObject *>( pObject );
+		if ( !pPhysicsObject->GetConstraints().empty() )
+			pPhysicsObject->QueueStiffnessUpdate();
+	}
 }
 
 void CPhysicsEnvironment::UpdateWorldMaterials()
@@ -1431,9 +1525,9 @@ void CPhysicsEnvironment::RemoveObjectContacts( CPhysicsObject *pObject )
 	std::erase( m_PendingHoldChecks, pObject );
 	std::erase( m_PenetrationResets, pObject );
 	std::erase_if( m_PenetrationHolds, [&]( const PenetrationHold_t &hold ) {
-		const bool bMember = hold.m_pObject == pObject || ( b3Shape_IsValid( hold.m_MeshShape ) && GetShapeObject( hold.m_MeshShape ) == pObject );
+		const bool bMember = hold.m_pObject == pObject || ( b3Shape_IsValid( hold.m_StaticShape ) && GetShapeObject( hold.m_StaticShape ) == pObject );
 		if ( bMember )
-			m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_MeshShape ) );
+			m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_StaticShape ) );
 		return bMember;
 	} );
 
@@ -2468,7 +2562,7 @@ void CPhysicsEnvironment::ProcessPenetration()
 			continue;
 		}
 
-		if ( it->second.m_pMeshes[0] || it->second.m_pMeshes[1] )
+		if ( it->second.m_pObjects[0]->IsStatic() || it->second.m_pObjects[1]->IsStatic() )
 		{
 			HoldStaticPenetration( it->second );
 			continue;
@@ -2513,7 +2607,7 @@ bool CPhysicsEnvironment::IsShapePairHeld( b3ShapeId shape0, b3ShapeId shape1 ) 
 
 void CPhysicsEnvironment::DetectPendingPenetrationHolds()
 {
-	std::vector<b3ShapeId> shapes, meshShapes;
+	std::vector<b3ShapeId> shapes, staticShapes;
 	for ( CPhysicsObject *pObject : m_PendingHoldChecks )
 	{
 		if ( !pObject->IsMoveable() || !pObject->IsCollisionEnabled() )
@@ -2527,55 +2621,55 @@ void CPhysicsEnvironment::DetectPendingPenetrationHolds()
 			if ( b3Shape_IsSensor( shape ) )
 				continue;
 
-			meshShapes.clear();
+			staticShapes.clear();
 			b3QueryFilter filter = b3DefaultQueryFilter();
 			filter.maskBits = STATIC_SHAPE_BIT;
 			b3World_OverlapAABB(
 				m_World, b3Shape_GetAABB( shape ), filter,
 				[]( b3ShapeId candidate, void *pContext ) {
-					if ( b3Shape_GetType( candidate ) == b3_meshShape )
+					if ( b3Shape_GetType( candidate ) == b3_meshShape || b3Shape_GetType( candidate ) == b3_hullShape )
 						static_cast<std::vector<b3ShapeId> *>( pContext )->push_back( candidate );
 					return true;
 				},
-				&meshShapes );
-			for ( b3ShapeId meshShape : meshShapes )
-				TryHoldPenetration( shape, meshShape );
+				&staticShapes );
+			for ( b3ShapeId staticShape : staticShapes )
+				TryHoldPenetration( shape, staticShape );
 		}
 	}
 	m_PendingHoldChecks.clear();
 }
 
-bool CPhysicsEnvironment::HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId meshShape ) const
+bool CPhysicsEnvironment::HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId staticShape ) const
 {
 	for ( uint64_t nKey : pObject->GetContactKeys() )
 	{
 		const Contact_t &contact = m_Contacts.find( nKey )->second;
-		const bool bPair = ( IsSameShape( contact.m_Shapes[0], shape ) && IsSameShape( contact.m_Shapes[1], meshShape ) ) || ( IsSameShape( contact.m_Shapes[0], meshShape ) && IsSameShape( contact.m_Shapes[1], shape ) );
+		const bool bPair = ( IsSameShape( contact.m_Shapes[0], shape ) && IsSameShape( contact.m_Shapes[1], staticShape ) ) || ( IsSameShape( contact.m_Shapes[0], staticShape ) && IsSameShape( contact.m_Shapes[1], shape ) );
 		if ( bPair && !contact.m_Friction.empty() )
 			return true;
 	}
 	return false;
 }
 
-void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId meshShape )
+void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId staticShape )
 {
-	const uint64_t nKey = GetShapePairKey( shape, meshShape );
+	const uint64_t nKey = GetShapePairKey( shape, staticShape );
 	if ( m_HeldShapePairs.contains( nKey ) || m_ProxyResetContacts.contains( nKey ) )
 		return;
 
 	CPhysicsObject *pObject = GetShapeObject( shape );
-	CPhysicsObject *pStatic = GetShapeObject( meshShape );
-	if ( !IsContactEnabled( pObject, pStatic ) || HasShapeFriction( pObject, shape, meshShape ) )
+	CPhysicsObject *pStatic = GetShapeObject( staticShape );
+	if ( !IsContactEnabled( pObject, pStatic ) || HasShapeFriction( pObject, shape, staticShape ) )
 		return;
 
 	bool bCollide = true;
 	if ( pObject->FindFilterDecision( pStatic, bCollide ) && !bCollide )
 		return;
 
-	if ( !FindHeldLedges( shape, meshShape, m_HeldLedges ) )
+	if ( !FindHeldLedges( shape, staticShape, m_HeldLedges ) )
 		return;
 
-	m_PenetrationHolds.push_back( { pObject, shape, meshShape } );
+	m_PenetrationHolds.push_back( { pObject, shape, staticShape } );
 	m_HeldShapePairs.insert( nKey );
 	QueuePenetrationReset( pObject );
 }
@@ -2605,12 +2699,10 @@ static float GetProxyDistance( const b3ShapeProxy &proxyA, b3WorldTransform tran
 	return b3ShapeDistance( &input, &cache, nullptr, 0 ).distance;
 }
 
-bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, std::vector<int> &ledges )
+bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId staticShape, std::vector<const CPhysConvex *> &ledges )
 {
 	ledges.clear();
-	const CPhysicsObject *pStatic = GetShapeObject( meshShape );
-	const CollideMesh_t &mesh = *static_cast<const CollideMesh_t *>( b3Shape_GetUserData( meshShape ) );
-	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pStatic->GetCollide()->GetConvexes();
+	const CPhysicsObject *pStatic = GetShapeObject( staticShape );
 
 	b3Sphere sphere = {};
 	b3ShapeProxy grown = {}, exact = {};
@@ -2630,6 +2722,17 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 
 	const b3WorldTransform transform = b3Body_GetTransform( GetShapeObject( shape )->GetBody() );
 	const b3WorldTransform staticTransform = b3Body_GetTransform( pStatic->GetBody() );
+	if ( b3Shape_GetType( staticShape ) != b3_meshShape )
+	{
+		const CPhysConvex *pLedge = static_cast<const CPhysConvex *>( b3Shape_GetUserData( staticShape ) );
+		const std::vector<b3Vec3> &points = pLedge->GetPoints();
+		if ( GetProxyDistance( exact, transform, { points.data(), static_cast<int>( points.size() ), 0.0f }, staticTransform ) <= 0.0f )
+			ledges.push_back( pLedge );
+		return !ledges.empty();
+	}
+
+	const CollideMesh_t &mesh = *static_cast<const CollideMesh_t *>( b3Shape_GetUserData( staticShape ) );
+	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pStatic->GetCollide()->GetConvexes();
 	const b3Transform relative = b3InvMulWorldTransforms( staticTransform, transform );
 	b3AABB bounds = { b3TransformPoint( relative, grown.points[0] ), b3TransformPoint( relative, grown.points[0] ) };
 	for ( int i = 1; i < grown.count; ++i )
@@ -2669,7 +2772,7 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, 
 			const std::vector<b3Vec3> &points = convexes[nLedge]->GetPoints();
 			state = m_LedgeStates.insert( m_LedgeStates.end(), { nLedge, GetProxyDistance( exact, transform, { points.data(), static_cast<int>( points.size() ), 0.0f }, staticTransform ) <= 0.0f } );
 			if ( state->second )
-				ledges.push_back( nLedge );
+				ledges.push_back( convexes[nLedge].get() );
 		}
 
 		if ( !state->second )
@@ -2741,7 +2844,7 @@ bool CPhysicsEnvironment::UpdateDetachedContact( Contact_t &contact )
 	return !contact.m_Friction.empty();
 }
 
-void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<int> &ledges )
+void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<const CPhysConvex *> &ledges )
 {
 	if ( pObject->GetSleepState() != CPhysicsObject::AWAKE )
 		return;
@@ -2754,9 +2857,8 @@ void CPhysicsEnvironment::ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsOb
 			return;
 	}
 
-	const std::vector<std::unique_ptr<CPhysConvex>> &convexes = pStatic->GetCollide()->GetConvexes();
-	for ( int nLedge : ledges )
-		ResolveLedgePenetration( *convexes[nLedge], pStatic, pObject );
+	for ( const CPhysConvex *pLedge : ledges )
+		ResolveLedgePenetration( *pLedge, pStatic, pObject );
 }
 
 void CPhysicsEnvironment::UpdatePenetrationHolds()
@@ -2764,9 +2866,9 @@ void CPhysicsEnvironment::UpdatePenetrationHolds()
 	for ( size_t i = 0; i < m_PenetrationHolds.size(); )
 	{
 		const PenetrationHold_t hold = m_PenetrationHolds[i];
-		bool bHeld = b3Shape_IsValid( hold.m_Shape ) && b3Shape_IsValid( hold.m_MeshShape ) && hold.m_pObject->IsMoveable() && hold.m_pObject->IsCollisionEnabled();
-		CPhysicsObject *pStatic = bHeld ? GetShapeObject( hold.m_MeshShape ) : nullptr;
-		bHeld = bHeld && pStatic->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pStatic ) && FindHeldLedges( hold.m_Shape, hold.m_MeshShape, m_HeldLedges );
+		bool bHeld = b3Shape_IsValid( hold.m_Shape ) && b3Shape_IsValid( hold.m_StaticShape ) && hold.m_pObject->IsMoveable() && hold.m_pObject->IsCollisionEnabled();
+		CPhysicsObject *pStatic = bHeld ? GetShapeObject( hold.m_StaticShape ) : nullptr;
+		bHeld = bHeld && pStatic->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pStatic ) && FindHeldLedges( hold.m_Shape, hold.m_StaticShape, m_HeldLedges );
 		if ( bHeld )
 		{
 			ResolveHeldLedges( hold.m_pObject, pStatic, m_HeldLedges );
@@ -2774,7 +2876,7 @@ void CPhysicsEnvironment::UpdatePenetrationHolds()
 			continue;
 		}
 
-		m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_MeshShape ) );
+		m_HeldShapePairs.erase( GetShapePairKey( hold.m_Shape, hold.m_StaticShape ) );
 		m_PenetrationHolds.erase( m_PenetrationHolds.begin() + static_cast<ptrdiff_t>( i ) );
 		if ( b3Shape_IsValid( hold.m_Shape ) && hold.m_pObject->IsCollisionEnabled() )
 			QueuePenetrationReset( hold.m_pObject );
@@ -2825,7 +2927,7 @@ void CPhysicsEnvironment::HoldStaticPenetration( const Contact_t &contact )
 
 	for ( int i = 0; i < 2; ++i )
 	{
-		if ( contact.m_pMeshes[i] && contact.m_pObjects[i]->IsStatic() && contact.m_pObjects[1 - i]->IsMoveable() )
+		if ( ( contact.m_pMeshes[i] || contact.m_pConvexes[i] ) && contact.m_pObjects[i]->IsStatic() && contact.m_pObjects[1 - i]->IsMoveable() )
 			TryHoldPenetration( contact.m_Shapes[1 - i], contact.m_Shapes[i] );
 	}
 }

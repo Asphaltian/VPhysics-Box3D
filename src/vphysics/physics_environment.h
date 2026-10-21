@@ -155,6 +155,8 @@ public:
 
 	float GetInverseTimestep() const { return m_flInverseTimestep; }
 
+	float GetSubstepRate() const { return static_cast<float>( SUBSTEP_COUNT ) * m_flInverseTimestep; }
+
 	void ResetSimulationClock() override;
 
 	float GetNextFrameTime() const override { return static_cast<float>( m_flNextStepTime ); }
@@ -237,6 +239,14 @@ public:
 	void QueueVelocityFlush( CPhysicsObject *pObject ) { m_VelocityFlushObjects.push_back( pObject ); }
 
 	void RemoveVelocityFlush( CPhysicsObject *pObject );
+
+	void QueueStiffnessUpdate( CPhysicsObject *pObject ) { m_StiffnessObjects.push_back( pObject ); }
+
+	void RemoveStiffnessUpdate( CPhysicsObject *pObject );
+
+	void AddBreakableConstraint( CPhysicsConstraint *pConstraint ) { m_BreakableConstraints.push_back( pConstraint ); }
+
+	void RemoveBreakableConstraint( CPhysicsConstraint *pConstraint );
 	void NotifyWoken( CPhysicsObject *pObject );
 	void RemoveWoken( CPhysicsObject *pObject );
 	void UpdateWorldMaterials();
@@ -369,7 +379,8 @@ private:
 	void ResolvePendingFilterPairs();
 	b3AABB GetFilterQueryBounds( const CPhysicsObject *pObject, const b3AABB &bounds ) const;
 	void QueryFilterPartners( CPhysicsObject *pObject, const b3AABB &query );
-	void ProcessJointEvents();
+	void ProcessConstraintBreaks();
+	void UpdateStiffnessBudgets();
 	void RestoreObject( const physrestoreparams_t &params );
 	void RestoreConstraint( const physrestoreparams_t &params );
 	void ForgetRestoredObject( CPhysicsObject *pObject );
@@ -382,13 +393,13 @@ private:
 	void HoldStaticPenetration( const Contact_t &contact );
 	void ResolveLedgePenetration( const CPhysConvex &convex, const CPhysicsObject *pStatic, CPhysicsObject *pObject );
 	void DetectPendingPenetrationHolds();
-	void TryHoldPenetration( b3ShapeId shape, b3ShapeId meshShape );
-	bool FindHeldLedges( b3ShapeId shape, b3ShapeId meshShape, std::vector<int> &ledges );
-	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId meshShape ) const;
+	void TryHoldPenetration( b3ShapeId shape, b3ShapeId staticShape );
+	bool FindHeldLedges( b3ShapeId shape, b3ShapeId staticShape, std::vector<const CPhysConvex *> &ledges );
+	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId staticShape ) const;
 	void UpdatePenetrationHolds();
 	void QueuePenetrationReset( CPhysicsObject *pObject );
 	void ApplyPenetrationResets();
-	void ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<int> &ledges );
+	void ResolveHeldLedges( CPhysicsObject *pObject, CPhysicsObject *pStatic, const std::vector<const CPhysConvex *> &ledges );
 	void ReleaseDisabledContacts();
 	void DispatchFriction();
 	void PurgePairTimes();
@@ -443,6 +454,9 @@ private:
 	std::vector<CPhysicsObject *> m_ActiveObjects;
 	std::vector<CPhysicsObject *> m_PendingVelocityObjects;
 	std::vector<CPhysicsObject *> m_VelocityFlushObjects;
+	std::vector<CPhysicsObject *> m_StiffnessObjects;
+	std::vector<CPhysicsObject *> m_StiffnessBodies;
+	uint32_t m_nStiffnessPass = 0;
 	std::vector<CPhysicsObject *> m_WokenObjects;
 	std::vector<CPhysicsObject *> m_SimulatedObjects;
 	std::vector<CPhysicsObject *> m_SteppedObjects;
@@ -455,6 +469,7 @@ private:
 	std::vector<CPhysicsFluidController *> m_FluidControllers;
 	std::vector<CPhysicsPlayerController *> m_PlayerControllers;
 	std::vector<IPhysicsConstraint *> m_DeadConstraints;
+	std::vector<CPhysicsConstraint *> m_BreakableConstraints;
 	std::vector<CPhysicsConstraint *> m_BrokenConstraints;
 	std::vector<CPhysicsObject *> m_RestoredCollisions;
 	std::vector<CPhysicsConstraintGroup *> m_RestoredGroups;
@@ -505,14 +520,14 @@ private:
 	{
 		CPhysicsObject *m_pObject;
 		b3ShapeId m_Shape;
-		b3ShapeId m_MeshShape;
+		b3ShapeId m_StaticShape;
 	};
 
 	std::vector<CPhysicsObject *> m_PendingHoldChecks;
 	std::vector<CPhysicsObject *> m_PenetrationResets;
 	std::vector<PenetrationHold_t> m_PenetrationHolds;
 	std::unordered_set<uint64_t> m_HeldShapePairs;
-	std::vector<int> m_HeldLedges;
+	std::vector<const CPhysConvex *> m_HeldLedges;
 	std::vector<std::pair<int, bool>> m_LedgeStates;
 	std::vector<int> m_MeshTriangles;
 	std::unordered_map<uint64_t, float> m_PairSpanCapacities;

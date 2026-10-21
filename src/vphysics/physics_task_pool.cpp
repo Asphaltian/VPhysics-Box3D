@@ -4,6 +4,49 @@
 
 #include <algorithm>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sched.h>
+#include <fstream>
+#include <set>
+#include <string>
+#endif
+
+int CTaskPool::GetPhysicalCoreCount()
+{
+	int nCores = 0;
+#ifdef _WIN32
+	DWORD nBytes = 0;
+	GetLogicalProcessorInformationEx( RelationProcessorCore, nullptr, &nBytes );
+	std::vector<char> buffer( nBytes );
+	if ( GetLogicalProcessorInformationEx( RelationProcessorCore, reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *>( buffer.data() ), &nBytes ) )
+	{
+		for ( DWORD nOffset = 0; nOffset < nBytes; nOffset += reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *>( buffer.data() + nOffset )->Size )
+			++nCores;
+	}
+#else
+	cpu_set_t affinity;
+	if ( sched_getaffinity( 0, sizeof( affinity ), &affinity ) == 0 )
+	{
+		std::set<std::string> cores;
+		for ( int i = 0; i < CPU_SETSIZE; ++i )
+		{
+			if ( !CPU_ISSET( i, &affinity ) )
+				continue;
+
+			std::ifstream file( "/sys/devices/system/cpu/cpu" + std::to_string( i ) + "/topology/thread_siblings_list" );
+			std::string siblings;
+			cores.insert( std::getline( file, siblings ) ? siblings : std::to_string( i ) );
+		}
+		nCores = static_cast<int>( cores.size() );
+	}
+#endif
+	return nCores > 0 ? nCores : static_cast<int>( std::thread::hardware_concurrency() );
+}
+
 CTaskPool::CTaskPool( int nThreadCount )
 : m_Tasks( std::make_unique<Task_t[]>( B3_MAX_TASKS ) )
 {
@@ -14,7 +57,11 @@ CTaskPool::CTaskPool( int nThreadCount )
 CTaskPool::~CTaskPool()
 {
 	m_bQuit.store( true );
-	Signal( static_cast<int>( m_Workers.size() ) );
+	{
+		std::lock_guard lock( m_SignalMutex );
+		m_nSignals += static_cast<int>( m_Workers.size() );
+	}
+	m_SignalCondition.notify_all();
 	for ( std::thread &worker : m_Workers )
 		worker.join();
 }
@@ -37,7 +84,7 @@ CTaskPool::Task_t *CTaskPool::Enqueue( b3TaskCallback *pCallback, void *pContext
 		return nullptr;
 	}
 
-	const int nSlot = m_nNextSlot.fetch_add( 1, std::memory_order_relaxed );
+	const int nSlot = m_nNextSlot.fetch_add( 1 );
 	if ( nSlot >= B3_MAX_TASKS )
 	{
 		pCallback( pContext );
@@ -47,7 +94,7 @@ CTaskPool::Task_t *CTaskPool::Enqueue( b3TaskCallback *pCallback, void *pContext
 	Task_t &task = m_Tasks[nSlot];
 	task.m_pCallback = pCallback;
 	task.m_pContext = pContext;
-	task.m_nStatus.store( TASK_PENDING, std::memory_order_release );
+	task.m_nStatus.store( TASK_PENDING );
 	Signal( 1 );
 	return &task;
 }
@@ -81,8 +128,22 @@ bool CTaskPool::ExecuteOne()
 	return false;
 }
 
+bool CTaskPool::HasPendingTask() const
+{
+	const int nCount = std::min( m_nNextSlot.load(), B3_MAX_TASKS );
+	for ( int i = 0; i < nCount; ++i )
+	{
+		if ( m_Tasks[i].m_nStatus.load() == TASK_PENDING )
+			return true;
+	}
+	return false;
+}
+
 void CTaskPool::Signal( int nCount )
 {
+	if ( m_nSleeping.load() == 0 )
+		return;
+
 	{
 		std::lock_guard lock( m_SignalMutex );
 		m_nSignals += nCount;
@@ -95,19 +156,25 @@ void CTaskPool::Signal( int nCount )
 
 void CTaskPool::WorkerMain()
 {
-	for ( ;; )
+	while ( !m_bQuit.load() )
 	{
+		if ( ExecuteOne() )
+			continue;
+
+		if ( m_bActive.load( std::memory_order_relaxed ) )
 		{
-			std::unique_lock lock( m_SignalMutex );
+			std::this_thread::yield();
+			continue;
+		}
+
+		std::unique_lock lock( m_SignalMutex );
+		m_nSleeping.fetch_add( 1 );
+		if ( !HasPendingTask() )
+		{
 			m_SignalCondition.wait( lock, [this]() { return m_nSignals > 0; } );
 			--m_nSignals;
 		}
-		if ( m_bQuit.load() )
-			return;
-
-		while ( ExecuteOne() )
-		{
-		}
+		m_nSleeping.fetch_sub( 1 );
 	}
 }
 

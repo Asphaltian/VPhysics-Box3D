@@ -21,7 +21,11 @@ public:
 
 	int GetThreadCount() const { return static_cast<int>( m_Workers.size() ) + 1; }
 
+	static int GetPhysicalCoreCount();
+
 	void SetSerial( bool bSerial ) { m_bSerial = bSerial; }
+
+	void SetActive( bool bActive ) { m_bActive.store( bActive, std::memory_order_relaxed ); }
 
 	bool IsSerial() const { return m_bSerial; }
 
@@ -61,6 +65,7 @@ private:
 	Task_t *Enqueue( b3TaskCallback *pCallback, void *pContext );
 	void Finish( Task_t *pTask );
 	bool ExecuteOne();
+	bool HasPendingTask() const;
 	void WorkerMain();
 	void Signal( int nCount );
 
@@ -70,6 +75,8 @@ private:
 	std::mutex m_SignalMutex;
 	std::condition_variable m_SignalCondition;
 	int m_nSignals = 0;
+	std::atomic<int> m_nSleeping = 0;
+	std::atomic<bool> m_bActive = false;
 	std::atomic<bool> m_bQuit = false;
 	bool m_bSerial = false;
 };

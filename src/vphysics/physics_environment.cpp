@@ -191,7 +191,7 @@ static int GetWorkerCount()
 	if ( vbox_threads.GetInt() > 0 )
 		return vbox_threads.GetInt();
 
-	return std::max( 1, static_cast<int>( GetCPUInformation()->m_nPhysicalProcessors ) );
+	return std::max( 1, CTaskPool::GetPhysicalCoreCount() );
 }
 
 CPhysicsEnvironment::CPhysicsEnvironment()
@@ -562,6 +562,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	}
 	m_WokenObjects.clear();
 	m_TaskPool.SetSerial( static_cast<int>( m_SimulatedObjects.size() ) < PARALLEL_OBJECT_COUNT );
+	m_TaskPool.SetActive( true );
 
 	for ( CPhysicsObject *pObject : m_SimulatedObjects )
 	{
@@ -603,6 +604,7 @@ void CPhysicsEnvironment::Step( double flTime )
 
 	m_TaskPool.Reset();
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
+	m_TaskPool.SetActive( false );
 	m_flLastStepTime = flTime;
 	m_flNextStepTime = flTime + static_cast<double>( m_flTimestep );
 

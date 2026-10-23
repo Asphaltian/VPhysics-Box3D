@@ -180,7 +180,7 @@ private:
 	void DetachObjects();
 	void NotifyWokenObjects() const;
 	float GetBreakMass( int nBody ) const;
-	void UpdateWeldAnchor();
+	void UpdateJointAnchor();
 	float GetSlidePosition() const;
 	constraint_breakableparams_t GetSavedBreakableParams() const;
 

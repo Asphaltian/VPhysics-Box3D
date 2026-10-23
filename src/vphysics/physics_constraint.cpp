@@ -202,7 +202,7 @@ static int GetSolvedJointCount( const CPhysicsObject *pObject )
 	return nJoints;
 }
 
-static void DecoupleWeldAnchor( b3JointDef &base, const CPhysicsObject *pReference, const CPhysicsObject *pAttached, float flReferenceWeight, float flAttachedWeight )
+static void DecoupleJointAnchor( b3JointDef &base, const CPhysicsObject *pReference, const CPhysicsObject *pAttached, float flReferenceWeight, float flAttachedWeight, bool bHinge )
 {
 	if ( pReference->IsStatic() && pAttached->IsStatic() )
 		return;
@@ -212,7 +212,21 @@ static void DecoupleWeldAnchor( b3JointDef &base, const CPhysicsObject *pReferen
 	const b3Matrix3 complianceB = b3MulSM( flAttachedWeight, GetLeverCompliance( pAttached, b3MulQuat( frameA.q, b3Conjugate( frameB.q ) ) ) );
 	const b3Vec3 centerA = ToBox3D( pReference->GetMassCenterLocalSpace() );
 	const b3Vec3 centerB = b3TransformPoint( frameA, b3InvTransformPoint( frameB, ToBox3D( pAttached->GetMassCenterLocalSpace() ) ) );
-	base.localFrameA.p = b3MulMV( b3InvertMatrix( b3AddMM( complianceA, complianceB ) ), b3Add( b3MulMV( complianceA, centerA ), b3MulMV( complianceB, centerB ) ) );
+	const b3Matrix3 compliance = b3AddMM( complianceA, complianceB );
+	const b3Vec3 weighted = b3Add( b3MulMV( complianceA, centerA ), b3MulMV( complianceB, centerB ) );
+	if ( bHinge )
+	{
+		const b3Vec3 axis = b3RotateVector( frameA.q, b3Vec3_axisZ );
+		const float flCompliance = b3Dot( axis, b3MulMV( compliance, axis ) );
+		if ( !( flCompliance > 0.0f ) )
+			return;
+
+		base.localFrameA.p = b3MulAdd( frameA.p, b3Dot( axis, b3Sub( weighted, b3MulMV( compliance, frameA.p ) ) ) / flCompliance, axis );
+	}
+	else
+	{
+		base.localFrameA.p = b3MulMV( b3InvertMatrix( compliance ), weighted );
+	}
 	base.localFrameB.p = b3TransformPoint( frameB, b3InvTransformPoint( frameA, base.localFrameA.p ) );
 }
 
@@ -1261,11 +1275,11 @@ void CPhysicsConstraint::ApplyHingeServo( const ConstraintStep_t &step )
 	}
 }
 
-void CPhysicsConstraint::UpdateWeldAnchor()
+void CPhysicsConstraint::UpdateJointAnchor()
 {
 	JointDef_t def = m_Definition;
-	b3JointDef &base = def.m_Weld.base;
-	DecoupleWeldAnchor( base, m_pReference, m_pAttached, static_cast<float>( GetSolvedJointCount( m_pReference ) ), static_cast<float>( GetSolvedJointCount( m_pAttached ) ) );
+	b3JointDef &base = GetBaseDefinition( def, m_nJointType );
+	DecoupleJointAnchor( base, m_pReference, m_pAttached, static_cast<float>( GetSolvedJointCount( m_pReference ) ), static_cast<float>( GetSolvedJointCount( m_pAttached ) ), m_nJointType == b3_revoluteJoint );
 	b3Joint_SetLocalFrameA( m_Joint, base.localFrameA );
 	b3Joint_SetLocalFrameB( m_Joint, base.localFrameB );
 }
@@ -1277,8 +1291,8 @@ void CPhysicsConstraint::UpdateStiffnessCoupling()
 	if ( !HasJoint() || m_nJointType == b3_filterJoint )
 		return;
 
-	if ( m_nJointType == b3_weldJoint )
-		UpdateWeldAnchor();
+	if ( m_nJointType == b3_weldJoint || m_nJointType == b3_revoluteJoint )
+		UpdateJointAnchor();
 
 	m_flStiffnessHertz = GetBaseDefinition( m_Definition, m_nJointType ).constraintHertz;
 	const bool bAngular = m_nJointType == b3_weldJoint || m_nJointType == b3_revoluteJoint || m_nJointType == b3_prismaticJoint;

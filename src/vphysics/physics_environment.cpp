@@ -30,6 +30,7 @@
 static constexpr float DEFAULT_TIMESTEP = 1.0f / 66.0f;
 static constexpr float JOINT_HERTZ_FRACTION = 0.25f;
 static constexpr int STIFFEST_MODE_ITERATIONS = 16;
+static constexpr ptrdiff_t UNIT_STEP_TAIL = 3;
 static constexpr int PARALLEL_OBJECT_COUNT = 48;
 static constexpr float IVP_DEFAULT_GRAVITY = 9.83f;
 static constexpr float MAX_SIMULATE_DELTA = 1.0f;
@@ -566,8 +567,9 @@ void CPhysicsEnvironment::Step( double flTime )
 	m_TaskPool.SetSerial( static_cast<int>( m_SimulatedObjects.size() ) < PARALLEL_OBJECT_COUNT );
 	m_TaskPool.SetActive( true );
 
-	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	for ( auto it = m_SimulatedObjects.rbegin(); it != m_SimulatedObjects.rend(); ++it )
 	{
+		CPhysicsObject *pObject = *it;
 		if ( pObject->GetRestState() == CPhysicsObject::REST_FROZEN )
 			pObject->Revive( m_flCurrentTime, ++m_nReviveSequence );
 		pObject->RebuildCoreMatrix( m_flCurrentTime );
@@ -622,7 +624,8 @@ void CPhysicsEnvironment::Step( double flTime )
 		const b3BodyMoveEvent &event = events.moveEvents[i];
 		CPhysicsObject *pObject = static_cast<CPhysicsObject *>( event.userData );
 		pObject->UpdateTransform( event.transform );
-		pObject->ClampVelocity( false );
+		if ( pObject->GetFrictionHead() )
+			pObject->ClampVelocity( false );
 		m_SteppedObjects.push_back( pObject );
 		if ( pObject->GetSleepState() == CPhysicsObject::AWAKE )
 			continue;
@@ -910,7 +913,7 @@ void CPhysicsEnvironment::BuildSimulationUnits()
 		unit.m_nFirst = static_cast<int>( m_UnitObjects.size() );
 		CollectUnit( pObject, nStamp, m_UnitObjects );
 		unit.m_nCount = static_cast<int>( m_UnitObjects.size() ) - unit.m_nFirst;
-		unit.m_nSequence = 0;
+		unit.m_nSequence = std::numeric_limits<uint32_t>::max();
 		unit.m_bCheckRest = false;
 		for ( int i = unit.m_nFirst; i < unit.m_nFirst + unit.m_nCount; ++i )
 		{
@@ -923,10 +926,11 @@ void CPhysicsEnvironment::BuildSimulationUnits()
 				pMember->ResetControllerCursor( m_nStepCount );
 				m_SimulatedObjects.push_back( pMember );
 			}
-			unit.m_nSequence = std::max( unit.m_nSequence, pMember->GetReviveSequence() );
+			unit.m_nSequence = std::min( unit.m_nSequence, pMember->GetReviveSequence() );
 		}
 	}
 	std::sort( m_SimulationUnits.begin(), m_SimulationUnits.end(), []( const SimulationUnit_t &a, const SimulationUnit_t &b ) { return a.m_nSequence != b.m_nSequence ? a.m_nSequence > b.m_nSequence : a.m_nFirst < b.m_nFirst; } );
+	std::reverse( m_SimulationUnits.end() - std::min( static_cast<ptrdiff_t>( m_SimulationUnits.size() ), UNIT_STEP_TAIL ), m_SimulationUnits.end() );
 }
 
 void CPhysicsEnvironment::UpdateRestTimers()
@@ -1000,7 +1004,7 @@ void CPhysicsEnvironment::FreezeIsland( const SimulationUnit_t &unit )
 
 	for ( CPhysicsObject *pObject : m_IslandObjects )
 	{
-		if ( !pObject->IsMoveable() )
+		if ( pObject->IsStatic() )
 			continue;
 
 		pObject->Freeze( true );
@@ -2745,7 +2749,7 @@ bool CPhysicsEnvironment::FindHeldLedges( b3ShapeId shape, b3ShapeId staticShape
 	{
 		sphere = b3Shape_GetSphere( shape );
 		grown = { &sphere.center, 1, sphere.radius };
-		exact = { &sphere.center, 1, sphere.radius - SHAPE_INFLATION };
+		exact = { &sphere.center, 1, 0.0f };
 	}
 	else
 	{

@@ -170,9 +170,11 @@ private:
 	bool m_bWorldTarget;
 };
 
-class CCarWheelsSystem final : public CCarSystem
+class CCarWheelsSystem final : public CCarSystem, public IController
 {
 public:
+	static constexpr int PRIORITY = 405;
+
 	explicit CCarWheelsSystem( const CarSystemTemplate_t &carTemplate );
 	~CCarWheelsSystem() override;
 
@@ -193,6 +195,14 @@ public:
 	float GetBoosterTimeToGo() const override { return m_flBoosterTimeToGo; }
 
 	void GetDebugData( CarSystemDebugData_t &data ) const override;
+
+	int GetPriority() const override { return PRIORITY; }
+
+	const char *GetName() const override { return "sys:vehicle"; }
+
+	void Simulate( CPhysicsObject *pObject, float flTimestep ) override;
+
+	void ObjectDestroyed( CPhysicsObject * ) override {}
 
 private:
 	void DoSteeringWheel( int nWheel, float flAngle );

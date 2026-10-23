@@ -343,6 +343,10 @@ public:
 
 	DoubleQuat_t GetNextRotation() const { return m_NextRotation; }
 
+	DoubleQuat_t GetRotationAt( double flTime ) const;
+
+	float GetLastStepMotion() const { return m_flLastStepMotion; }
+
 	const DoubleMatrix3_t &GetCoreRotation() const { return m_CoreRotation; }
 
 	DoubleVec3_t GetCorePosition() const { return m_CorePosition; }
@@ -394,7 +398,6 @@ private:
 	void GetRestPose( bool bInStep, DoubleVec3_t &position, DoubleQuat_t &nextRotation, DoubleQuat_t &lastRotation ) const;
 	RestState_t EvaluateRest( double flTime, bool bInStep, bool &bMoved, bool &bCoarseMoved ) const;
 	DoubleVec3_t GetCorePositionAt( double flTime ) const;
-	DoubleQuat_t GetRotationAt( double flTime ) const;
 	b3Transform GetBodyTransform() const;
 	bool HasController( const IController *pController ) const;
 	void InvalidateVelocityCache();
@@ -487,12 +490,13 @@ private:
 	DoubleVec3_t m_PreviousCorePosition = {};
 	DoubleQuat_t m_PreviousRotation = { 0, 0, 0, 1 };
 	DoubleVec3_t m_FineRestPosition = {};
-	DoubleQuat_t m_FineRestRotation = { 0, 0, 0, 1 };
+	DoubleQuat_t m_FineRestRotation = {};
 	DoubleVec3_t m_CoarseRestPosition = {};
-	DoubleQuat_t m_CoarseRestRotation = { 0, 0, 0, 1 };
+	DoubleQuat_t m_CoarseRestRotation = {};
 	double m_flFineRestTime = 0.0;
 	double m_flCoarseRestTime = 0.0;
 	float m_flRestRadius = 0.0f;
+	float m_flLastStepMotion = 0.0f;
 	SleepState_t m_nSleepState = ASLEEP;
 
 	bool m_bStatic = false;

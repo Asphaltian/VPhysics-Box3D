@@ -28,6 +28,10 @@ static constexpr double FAR_ANCHOR_DISTANCE = 1e8f;
 static constexpr float ACKERMANN_MIN_ANGLE = 0.001f;
 static constexpr float CENTER_WHEEL_STEERING_SCALE = 0.5f;
 static constexpr float FIXED_WHEEL_SPIN_TRANSFER = 0.25f;
+static constexpr float MAX_WHEEL_CORRECTION_SPEED = 240.0f;
+static constexpr float HEAVY_BODY_MASS = 10000.0f;
+static constexpr float HEAVY_BODY_CORRECTION_SCALE = 2.75f;
+static constexpr float BODY_REST_MOTION = 1e-4f;
 static constexpr float IMPACT_NORMAL_FACTOR = 1.1f;
 static constexpr float IMPACT_NORMAL_BIAS = 0.1f;
 static constexpr float MAX_NORMAL_FACTOR = 3.0f;
@@ -384,16 +388,47 @@ CCarWheelsSystem::CCarWheelsSystem( const CarSystemTemplate_t &carTemplate )
 	new CForceActuator( m_pBody, b3Vec3_zero, farAnchor, carTemplate.m_flExtraGravityForce );
 	m_pFrontLateral = new CForceActuator( m_pBody, { -1.0f, 0.0f, LATERAL_FORCE_LEVER }, b3Vec3{ 1.0f, 0.0f, LATERAL_FORCE_LEVER }, 0.0f );
 	m_pRearLateral = new CForceActuator( m_pBody, { -1.0f, 0.0f, -LATERAL_FORCE_LEVER }, b3Vec3{ 1.0f, 0.0f, -LATERAL_FORCE_LEVER }, 0.0f );
+	m_pBody->AttachController( this );
 
 	DoSteering( 0.0f, false );
 }
 
 CCarWheelsSystem::~CCarWheelsSystem()
 {
+	m_pBody->DetachController( this );
 	for ( int i = 0; i < m_nWheels; ++i )
 	{
 		if ( b3Joint_IsValid( m_Joints[i] ) )
 			b3DestroyJoint( m_Joints[i], false );
+	}
+}
+
+void CCarWheelsSystem::Simulate( CPhysicsObject *, float flTimestep )
+{
+	const float flInverseTimestep = 1.0f / flTimestep;
+	float flMaxErrorSquared = MAX_WHEEL_CORRECTION_SPEED * MAX_WHEEL_CORRECTION_SPEED;
+	if ( m_pBody->GetMass() >= HEAVY_BODY_MASS )
+		flMaxErrorSquared *= HEAVY_BODY_CORRECTION_SCALE;
+
+	const DoubleMatrix3_t &rotation = m_pBody->GetCoreRotation();
+	const DoubleVec3_t bodyPosition = m_pBody->GetCorePosition();
+	const b3Vec3 bodyVelocity = ToFloat( InverseRotate( rotation, m_pBody->GetCoreVelocity() ) );
+	const b3Vec3 bodyAngularVelocity = m_pBody->GetCoreAngularVelocity();
+	for ( int i = 0; i < m_nWheels; ++i )
+	{
+		CPhysicsObject *pWheel = m_pWheels[i];
+		const b3Vec3 attachment = m_Attachments[i];
+		const b3Vec3 anchor = b3MulAdd( attachment, flTimestep, b3Add( b3Cross( bodyAngularVelocity, attachment ), bodyVelocity ) );
+		const b3Vec3 wheelPosition = ToFloat( InverseRotate( rotation, pWheel->GetCorePosition() - bodyPosition ) );
+		const b3Vec3 wheelVelocity = ToFloat( InverseRotate( rotation, pWheel->GetCoreVelocity() ) );
+		const b3Vec3 error = b3MulSV( flInverseTimestep, b3Sub( b3MulAdd( wheelPosition, flTimestep, wheelVelocity ), anchor ) );
+		if ( !( b3LengthSquared( error ) > flMaxErrorSquared ) )
+			continue;
+
+		pWheel->SetCoreVelocity( b3Vec3_zero );
+		pWheel->SetPendingVelocity( b3Vec3_zero );
+		if ( m_pBody->GetLastStepMotion() < BODY_REST_MOTION )
+			pWheel->MoveTo( bodyPosition + Rotate( rotation, anchor ), pWheel->GetRotationAt( pWheel->GetEnvironment()->GetCurrentTime() ), true );
 	}
 }
 

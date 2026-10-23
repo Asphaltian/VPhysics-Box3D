@@ -304,6 +304,12 @@ public:
 
 	FrictionContact_t *GetFrictionHead() const { return m_pFrictionHead; }
 
+	bool IsBullet() const { return m_bBullet; }
+
+	float GetFastDistance() const { return m_flFastDistance; }
+
+	float GetMaxExtent() const { return m_flMaxExtent; }
+
 	void SetFrictionHead( FrictionContact_t *pFriction ) { m_pFrictionHead = pFriction; }
 
 	uint32_t GetPlacedStep() const { return m_nPlacedStep; }

@@ -393,6 +393,8 @@ private:
 	void HoldStaticPenetration( const Contact_t &contact );
 	void ResolveLedgePenetration( const CPhysConvex &convex, const CPhysicsObject *pStatic, CPhysicsObject *pObject );
 	void DetectPendingPenetrationHolds();
+	void CaptureBulletSweeps();
+	void ResolveBulletPairs();
 	void TryHoldPenetration( b3ShapeId shape, b3ShapeId staticShape );
 	bool FindHeldLedges( b3ShapeId shape, b3ShapeId staticShape, std::vector<const CPhysConvex *> &ledges );
 	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId staticShape ) const;
@@ -460,6 +462,29 @@ private:
 	std::vector<CPhysicsObject *> m_WokenObjects;
 	std::vector<CPhysicsObject *> m_SimulatedObjects;
 	std::vector<CPhysicsObject *> m_SteppedObjects;
+
+	struct BulletSweep_t
+	{
+		CPhysicsObject *m_pObject;
+		b3Pos m_Center;
+		b3Quat m_Rotation;
+		b3Pos m_EndCenter;
+		b3Quat m_EndRotation;
+		b3AABB m_Bounds;
+		size_t m_nFirstShape;
+		size_t m_nShapeCount;
+	};
+
+	struct BulletHit_t
+	{
+		size_t m_nIndex[2];
+		float m_flFraction;
+	};
+
+	std::vector<BulletSweep_t> m_BulletSweeps;
+	std::vector<BulletHit_t> m_BulletHits;
+	std::vector<b3ShapeId> m_BulletShapes;
+
 	std::vector<CPhysicsObject *> m_FrozenObjects;
 	std::vector<CPhysicsObject *> m_UnitObjects;
 	std::vector<CPhysicsObject *> m_IslandObjects;

@@ -187,6 +187,23 @@ static bool PreSolveShapes( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos, b3Vec3, v
 	return static_cast<CPhysicsEnvironment *>( pContext )->IsContactEnabled( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
 }
 
+static float GetRotationChord( b3Quat q1, b3Quat q2 )
+{
+	return 2.0f * b3Length( b3InvMulQuat( q1, q2 ).v );
+}
+
+static b3ShapeProxy MakeShapeProxy( b3ShapeId shape, b3Sphere &sphere )
+{
+	if ( b3Shape_GetType( shape ) == b3_sphereShape )
+	{
+		sphere = b3Shape_GetSphere( shape );
+		return { &sphere.center, 1, sphere.radius };
+	}
+
+	const b3HullData *pHull = b3Shape_GetHull( shape );
+	return { b3GetHullPoints( pHull ), pHull->vertexCount, 0.0f };
+}
+
 static ConVar vbox_threads( "vbox_threads", "0", FCVAR_ARCHIVE, "Physics worker threads, 0 uses one per physical CPU core. Takes effect on the next map load", true, 0.0f, true, B3_MAX_WORKERS );
 
 static int GetWorkerCount()
@@ -607,6 +624,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	ApplyPenetrationResets();
 
 	UpdateStiffnessBudgets();
+	CaptureBulletSweeps();
 	m_TaskPool.Reset();
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
 	m_TaskPool.SetActive( false );
@@ -638,6 +656,8 @@ void CPhysicsEnvironment::Step( double flTime )
 		woken.push_back( pObject );
 	}
 
+	ResolveBulletPairs();
+
 	for ( CPhysicsObject *pObject : woken )
 	{
 		ReportPendingLeaves( pObject );
@@ -660,6 +680,122 @@ void CPhysicsEnvironment::Step( double flTime )
 	DispatchContactEvents();
 	ProcessSensorEvents();
 	ProcessPenetration();
+}
+
+void CPhysicsEnvironment::CaptureBulletSweeps()
+{
+	m_BulletSweeps.clear();
+	for ( CPhysicsObject *pObject : m_SimulatedObjects )
+	{
+		if ( !pObject->IsBullet() )
+			continue;
+
+		const b3Pos center = b3Body_GetWorldCenter( pObject->GetBody() );
+		const b3Quat rotation = b3Body_GetRotation( pObject->GetBody() );
+		m_BulletSweeps.push_back( { pObject, center, rotation, center, rotation, {}, 0, 0 } );
+	}
+}
+
+void CPhysicsEnvironment::ResolveBulletPairs()
+{
+	if ( m_BulletSweeps.size() < 2 )
+		return;
+
+	m_BulletShapes.clear();
+	for ( BulletSweep_t &sweep : m_BulletSweeps )
+	{
+		const b3BodyId body = sweep.m_pObject->GetBody();
+		sweep.m_nFirstShape = m_BulletShapes.size();
+		m_BulletShapes.resize( sweep.m_nFirstShape + b3Body_GetShapeCount( body ) );
+		sweep.m_nShapeCount = b3Body_GetShapes( body, m_BulletShapes.data() + sweep.m_nFirstShape, static_cast<int>( m_BulletShapes.size() - sweep.m_nFirstShape ) );
+		sweep.m_EndCenter = b3Body_GetWorldCenter( body );
+		sweep.m_EndRotation = b3Body_GetRotation( body );
+		const b3Vec3 radius = b3MulSV( sweep.m_pObject->GetMaxExtent(), b3Vec3_one );
+		const b3Vec3 start = b3ToVec3( sweep.m_Center ), end = b3ToVec3( sweep.m_EndCenter );
+		sweep.m_Bounds = { b3Sub( b3Min( start, end ), radius ), b3Add( b3Max( start, end ), radius ) };
+	}
+	std::sort( m_BulletSweeps.begin(), m_BulletSweeps.end(), []( const BulletSweep_t &a, const BulletSweep_t &b ) { return a.m_Bounds.lowerBound.x < b.m_Bounds.lowerBound.x; } );
+
+	m_BulletHits.clear();
+	for ( size_t i = 0; i < m_BulletSweeps.size(); ++i )
+	{
+		const BulletSweep_t &a = m_BulletSweeps[i];
+		const b3BodyId bodyA = a.m_pObject->GetBody();
+		for ( size_t j = i + 1; j < m_BulletSweeps.size() && m_BulletSweeps[j].m_Bounds.lowerBound.x <= a.m_Bounds.upperBound.x; ++j )
+		{
+			const BulletSweep_t &b = m_BulletSweeps[j];
+			if ( !b3AABB_Overlaps( a.m_Bounds, b.m_Bounds ) )
+				continue;
+
+			const b3Vec3 startOffset = b3InvRotateVector( a.m_Rotation, b3SubPos( b.m_Center, a.m_Center ) );
+			const b3Vec3 endOffset = b3InvRotateVector( a.m_EndRotation, b3SubPos( b.m_EndCenter, a.m_EndCenter ) );
+			const float flChord = GetRotationChord( b3InvMulQuat( a.m_Rotation, b.m_Rotation ), b3InvMulQuat( a.m_EndRotation, b.m_EndRotation ) );
+			const float flMotion = b3Distance( startOffset, endOffset ) + flChord * b.m_pObject->GetMaxExtent();
+			if ( flMotion <= std::min( a.m_pObject->GetFastDistance(), b.m_pObject->GetFastDistance() ) || !IsCollisionAllowed( a.m_pObject, b.m_pObject ) || !IsContactEnabled( a.m_pObject, b.m_pObject ) )
+				continue;
+
+			const b3BodyId bodyB = b.m_pObject->GetBody();
+
+			b3TOIInput input;
+			input.sweepA = { b3Body_GetLocalCenter( bodyA ), b3Vec3_zero, b3SubPos( a.m_EndCenter, a.m_Center ), a.m_Rotation, a.m_EndRotation };
+			input.sweepB = { b3Body_GetLocalCenter( bodyB ), b3SubPos( b.m_Center, a.m_Center ), b3SubPos( b.m_EndCenter, a.m_Center ), b.m_Rotation, b.m_EndRotation };
+			float flFraction = 1.0f;
+			for ( size_t nShapeA = a.m_nFirstShape; nShapeA < a.m_nFirstShape + a.m_nShapeCount; ++nShapeA )
+			{
+				const b3ShapeId shapeA = m_BulletShapes[nShapeA];
+				if ( b3Shape_IsSensor( shapeA ) )
+					continue;
+
+				const b3Filter filterA = b3Shape_GetFilter( shapeA );
+				for ( size_t nShapeB = b.m_nFirstShape; nShapeB < b.m_nFirstShape + b.m_nShapeCount; ++nShapeB )
+				{
+					const b3ShapeId shapeB = m_BulletShapes[nShapeB];
+					const b3Filter filterB = b3Shape_GetFilter( shapeB );
+					if ( b3Shape_IsSensor( shapeB ) || ( filterA.maskBits & filterB.categoryBits ) == 0 || ( filterA.categoryBits & filterB.maskBits ) == 0 || IsShapePairHeld( shapeA, shapeB ) )
+						continue;
+
+					b3Sphere sphereA, sphereB;
+					input.proxyA = MakeShapeProxy( shapeA, sphereA );
+					input.proxyB = MakeShapeProxy( shapeB, sphereB );
+					input.maxFraction = flFraction;
+					const b3TOIOutput output = b3TimeOfImpact( &input );
+					if ( output.state == b3_toiStateHit && output.fraction > 0.0f && output.fraction < flFraction )
+						flFraction = output.fraction;
+				}
+			}
+
+			if ( flFraction < 1.0f )
+				m_BulletHits.push_back( { { i, j }, flFraction } );
+		}
+	}
+
+	std::sort( m_BulletHits.begin(), m_BulletHits.end(), []( const BulletHit_t &a, const BulletHit_t &b ) { return a.m_flFraction < b.m_flFraction; } );
+	const auto getSweepPose = []( const BulletSweep_t &sweep, b3Pos base, float flFraction ) -> b3Transform {
+		const b3Quat rotation = b3NLerp( sweep.m_Rotation, sweep.m_EndRotation, flFraction );
+		const b3Vec3 center = b3MulAdd( b3SubPos( sweep.m_Center, base ), flFraction, b3SubPos( sweep.m_EndCenter, sweep.m_Center ) );
+		return { b3Sub( center, b3RotateVector( rotation, b3Body_GetLocalCenter( sweep.m_pObject->GetBody() ) ) ), rotation };
+	};
+	const b3Vec3 gravity = b3World_GetGravity( m_World );
+	for ( const BulletHit_t &hit : m_BulletHits )
+	{
+		BulletSweep_t &first = m_BulletSweeps[hit.m_nIndex[0]];
+		BulletSweep_t &second = m_BulletSweeps[hit.m_nIndex[1]];
+		if ( !first.m_pObject || !second.m_pObject )
+			continue;
+
+		const bool bFirstMoves = b3Body_GetMass( first.m_pObject->GetBody() ) <= b3Body_GetMass( second.m_pObject->GetBody() );
+		BulletSweep_t &moved = bFirstMoves ? first : second;
+		const BulletSweep_t &held = bFirstMoves ? second : first;
+		const b3BodyId body = moved.m_pObject->GetBody();
+		const b3Transform heldEnd = getSweepPose( held, held.m_Center, 1.0f );
+		const b3Transform heldImpact = getSweepPose( held, held.m_Center, hit.m_flFraction );
+		const b3Transform movedImpact = getSweepPose( moved, held.m_Center, hit.m_flFraction );
+		const b3Transform target = b3MulTransforms( heldEnd, b3InvMulTransforms( heldImpact, movedImpact ) );
+		b3Body_SetTransform( body, b3OffsetPos( held.m_Center, target.p ), target.q );
+		b3Body_SetLinearVelocity( body, b3MulAdd( b3Body_GetLinearVelocity( body ), -( 1.0f - hit.m_flFraction ) * m_flTimestep * b3Body_GetGravityScale( body ), gravity ) );
+		moved.m_pObject->UpdateTransform( b3Body_GetTransform( body ) );
+		moved.m_pObject = nullptr;
+	}
 }
 
 void CPhysicsEnvironment::ProcessConstraintBreaks()
@@ -2839,19 +2975,8 @@ float CPhysicsEnvironment::GetMeshFrictionGap( const Contact_t &contact, const F
 	if ( nMesh < 0 || !b3Shape_IsValid( contact.m_Shapes[0] ) || !b3Shape_IsValid( contact.m_Shapes[1] ) )
 		return FRICTION_RELEASE_SEPARATION;
 
-	const b3ShapeId shape = contact.m_Shapes[1 - nMesh];
-	b3Sphere sphere = {};
-	b3ShapeProxy proxy = {};
-	if ( b3Shape_GetType( shape ) == b3_sphereShape )
-	{
-		sphere = b3Shape_GetSphere( shape );
-		proxy = { &sphere.center, 1, sphere.radius };
-	}
-	else
-	{
-		const b3HullData *pHull = b3Shape_GetHull( shape );
-		proxy = { b3GetHullPoints( pHull ), pHull->vertexCount, 0.0f };
-	}
+	b3Sphere sphere;
+	const b3ShapeProxy proxy = MakeShapeProxy( contact.m_Shapes[1 - nMesh], sphere );
 
 	const b3MeshData *pData = contact.m_pMeshes[nMesh]->m_pData;
 	const b3MeshTriangle &triangle = b3GetMeshTriangles( pData )[friction.m_nTriangle];

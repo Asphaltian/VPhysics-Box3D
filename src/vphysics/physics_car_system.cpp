@@ -348,6 +348,7 @@ CCarWheelsSystem::CCarWheelsSystem( const CarSystemTemplate_t &carTemplate )
 , m_flCounterTorqueFactor( carTemplate.m_flCounterTorqueFactor )
 {
 	const b3Vec3 bodyShift = m_pBody->GetShift();
+	m_pBody->SetCarBody();
 	const b3Quat frame = { { 0.0f, std::numbers::sqrt2_v<float> * 0.5f, 0.0f }, std::numbers::sqrt2_v<float> * 0.5f };
 	for ( int i = 0; i < m_nWheels; ++i )
 	{

@@ -189,6 +189,12 @@ public:
 
 	void SetCarWheel() { m_bCarWheel = true; }
 
+	void SetCarBody() { m_bCarBody = true; }
+
+	bool IsCarCore() const { return m_bCarWheel || m_bCarBody; }
+
+	float GetRestRadius() const { return m_flRestRadius; }
+
 	void SetTouchedDynamic() { m_bHasTouchedDynamic = true; }
 
 	void ClearAsleepSinceCreation() { m_bAsleepSinceCreation = false; }
@@ -220,7 +226,36 @@ public:
 
 	void SetReportPreStepVelocity( bool bReport ) { m_bReportPreStepVelocity = bReport; }
 
+	bool IsReportingPreStepVelocity() const { return m_bReportPreStepVelocity; }
+
+	void SetReportedImpactVelocity( b3Vec3 velocity, b3Vec3 angularVelocity );
+
+	void ClearReportedImpactVelocity()
+	{
+		m_bReportImpactVelocity = false;
+		m_bReportImpactAngularVelocity = false;
+	}
+
+	bool IsReportingImpactVelocity() const { return m_bReportImpactVelocity || m_bReportImpactAngularVelocity; }
+
+	b3Vec3 GetReportedTotalVelocity() const { return b3Add( GetReportedVelocity(), m_PendingVelocity ); }
+
+	b3Vec3 GetReportedTotalAngularVelocity() const { return b3Add( GetReportedAngularVelocity(), m_PendingAngularVelocity ); }
+
+	int GetImpactCount( uint32_t nStep ) const { return m_nImpactStep == nStep ? m_nImpactCount : 0; }
+
+	bool IsImpactFrozen( uint32_t nStep ) const { return m_nImpactStep == nStep && m_bImpactFrozen; }
+
+	void SetImpactState( uint32_t nStep, int nCount, bool bFrozen )
+	{
+		m_nImpactStep = nStep;
+		m_nImpactCount = nCount;
+		m_bImpactFrozen = bFrozen;
+	}
+
 	Vector GetPreStepVelocityAtPoint( const Vector &worldPosition ) const;
+
+	b3Quat GetPreStepRotation() const;
 
 	CPhysicsEnvironment *GetEnvironment() const { return m_pEnvironment; }
 
@@ -438,6 +473,9 @@ private:
 	FrictionContact_t *m_pFrictionHead = nullptr;
 	b3Vec3 m_PreStepVelocity = b3Vec3_zero;
 	b3Vec3 m_PreStepAngularVelocity = b3Vec3_zero;
+	b3Quat m_PreStepRotation = b3Quat_identity;
+	b3Vec3 m_ImpactVelocity = b3Vec3_zero;
+	b3Vec3 m_ImpactAngularVelocity = b3Vec3_zero;
 	float m_flFastDistance = 0.0f;
 	float m_flStiffnessScale = 1.0f;
 	uint32_t m_nStiffnessPass = 0;
@@ -445,6 +483,8 @@ private:
 	uint32_t m_nPreStepCount = 0;
 	int m_nControllerCursor = -1;
 	uint32_t m_nControllerStep = UINT32_MAX;
+	uint32_t m_nImpactStep = UINT32_MAX;
+	int m_nImpactCount = 0;
 	const CPhysCollide *m_pCollide = nullptr;
 	void *m_pGameData = nullptr;
 	IPhysicsShadowController *m_pShadow = nullptr;
@@ -519,12 +559,16 @@ private:
 	bool m_bCoreAngularVelocityValid = false;
 	bool m_bNoShift = true;
 	bool m_bReportPreStepVelocity = false;
-	bool m_bPreStepVelocityValid = false;
-	bool m_bPreStepAngularVelocityValid = false;
+	bool m_bPreStepVelocityValid = true;
+	bool m_bPreStepAngularVelocityValid = true;
 	bool m_bAsleepSinceCreation = false;
 	bool m_bHasName = false;
 	bool m_bHasTouchedDynamic = false;
 	bool m_bCarWheel = false;
+	bool m_bCarBody = false;
+	bool m_bReportImpactVelocity = false;
+	bool m_bReportImpactAngularVelocity = false;
+	bool m_bImpactFrozen = false;
 	bool m_bGravityApplied = false;
 	bool m_bContactGravity = false;
 	bool m_bRestFast = false;

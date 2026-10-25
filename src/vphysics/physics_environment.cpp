@@ -50,6 +50,23 @@ static constexpr float FRICTION_ENERGY_THRESHOLD = 0.05f;
 static constexpr float IVP_ENERGY_TO_SOURCE = 1550.0032f;
 static constexpr float SURFACE_NORMAL_BIAS = 1e-10f;
 static constexpr float IMPACT_SEPARATION = COLLISION_TOLERANCE * IVP_TO_SOURCE;
+static constexpr float IMPACT_APPROACH_EPSILON = 1e-4f;
+static constexpr float IMPACT_PUSH_FRACTION = 0.1f;
+static constexpr int IMPACT_MAX_ITERATIONS = 100;
+static constexpr float IMPACT_FIXED_MASS_RATIO = 1e5f;
+static constexpr float IMPACT_NORMALIZE_EPSILON = 1e-10f;
+static constexpr float IMPACT_RESPONSE_EPSILON = 1e-15f;
+static constexpr float IMPACT_COSINE_QUARTIC = 1.0f / 24.0f;
+static constexpr float IMPACT_RESCUE_ROTATION_SCALE = 2.5e-5f;
+static constexpr float IMPACT_RESCUE_ROTATION_LIMIT = 0.25f;
+static constexpr float IMPACT_RESCUE_GAP = 2.0f * COLLISION_TOLERANCE;
+static constexpr float IMPACT_RESCUE_SPEED_SCALE = 1.2f;
+static constexpr float IMPACT_HEAVY_SEPARATION = 0.8333333f;
+static constexpr int IMPACT_REPEAT_LIMIT = 10;
+static constexpr float IMPACT_REPEAT_ELASTICITY_SCALE = 0.5f;
+static constexpr float IMPACT_REPEAT_SEPARATION = 0.01f;
+static constexpr float IMPACT_PROPAGATION_MAX_GAP = 22.0f * COLLISION_TOLERANCE;
+static constexpr int IMPACT_PROPAGATION_PASSES = 5000;
 static constexpr float PENETRATION_SEPARATION = -2.0f * SHAPE_INFLATION;
 static constexpr float MESH_COPLANAR_COSINE = 0.996f;
 static constexpr float FRICTION_RELEASE_SEPARATION = 4.5f * COLLISION_TOLERANCE * IVP_TO_SOURCE - 2.0f * SHAPE_INFLATION;
@@ -626,6 +643,7 @@ void CPhysicsEnvironment::Step( double flTime )
 	UpdateStiffnessBudgets();
 	CaptureBulletSweeps();
 	m_TaskPool.Reset();
+	m_nStepContactSequence = m_nContactSequence;
 	b3World_Step( m_World, m_flTimestep, SUBSTEP_COUNT );
 	m_TaskPool.SetActive( false );
 	m_flLastStepTime = flTime;
@@ -1935,7 +1953,16 @@ void CPhysicsEnvironment::QueueContactEvent( ContactEvent_t::Type_t nType, const
 	event.m_Materials[1] = friction.m_Materials[1];
 	event.m_Point = friction.m_Point;
 	event.m_Normal = friction.m_Normal;
+	event.m_Anchors[0] = friction.m_Anchors[0];
+	event.m_Anchors[1] = friction.m_Anchors[1];
 	event.m_flApproachSpeed = flApproachSpeed;
+	event.m_flFriction = friction.m_flFriction;
+	event.m_flSeparation = friction.m_flSeparation;
+	event.m_nSequence = friction.m_nSequence;
+	event.m_nContactKey = GetContactKey( contact.m_ContactId );
+	event.m_nFeatureId = friction.m_nFeatureId;
+	event.m_nTriangle = friction.m_nTriangle;
+	event.m_bFollowing = false;
 	event.m_pEnding = nullptr;
 }
 
@@ -1956,6 +1983,483 @@ void CPhysicsEnvironment::ReportTouch( CPhysicsObject *pObject0, CPhysicsObject 
 		m_pCollisionEvents->StartTouch( pObject0, pObject1, &data );
 	else
 		m_pCollisionEvents->EndTouch( pObject0, pObject1, &data );
+}
+
+struct ImpactBody_t
+{
+	CPhysicsObject *m_pObject;
+	b3Vec3 m_Velocity;
+	b3Vec3 m_AngularVelocity;
+	b3Vec3 m_Speed;
+	b3Vec3 m_AngularSpeed;
+	float m_flInvMass;
+	int m_nImpacts;
+	bool m_bFixed;
+	bool m_bFrozen;
+	bool m_bTouched = false;
+	bool m_bExpanded = false;
+
+	ImpactBody_t( CPhysicsObject *pObject, uint32_t nStep )
+	: m_pObject( pObject )
+	, m_flInvMass( pObject->IsMoveable() ? pObject->GetInvMass() : 0.0f )
+	, m_nImpacts( pObject->GetImpactCount( nStep ) )
+	, m_bFixed( !pObject->IsMoveable() )
+	, m_bFrozen( pObject->IsImpactFrozen( nStep ) )
+	{
+		const bool bReport = pObject->IsReportingPreStepVelocity();
+		pObject->SetReportPreStepVelocity( true );
+		m_Velocity = pObject->GetReportedTotalVelocity();
+		m_AngularVelocity = pObject->CoreToIVP( pObject->GetReportedTotalAngularVelocity() );
+		m_Speed = m_bFrozen ? b3Vec3_zero : pObject->GetReportedVelocity();
+		m_AngularSpeed = m_bFrozen ? b3Vec3_zero : pObject->CoreToIVP( pObject->GetReportedAngularVelocity() );
+		pObject->SetReportPreStepVelocity( bReport );
+	}
+
+	b3Vec3 RotateInverseInertia( b3Vec3 vector ) const
+	{
+		const b3Vec3 local = m_pObject->IVPToCore( vector );
+		const b3Vec3 inverseInertia = m_pObject->GetCoreInverseInertia();
+		return m_pObject->CoreToIVP( { local.x * inverseInertia.x, local.y * inverseInertia.y, local.z * inverseInertia.z } );
+	}
+
+	b3Vec3 GetPointVelocity( b3Vec3 lever ) const { return b3Add( m_Velocity, b3Cross( m_AngularVelocity, lever ) ); }
+
+	b3Vec3 GetPointSpeed( b3Vec3 lever ) const { return b3Add( m_Speed, b3Cross( m_AngularSpeed, lever ) ); }
+
+	b3Vec3 GetResponse( b3Vec3 lever, b3Vec3 direction ) const { return b3MulAdd( b3Cross( RotateInverseInertia( b3Cross( lever, direction ) ), lever ), m_flInvMass, direction ); }
+
+	float GetEffectiveMass( b3Vec3 lever, b3Vec3 direction ) const { return m_bFixed ? 1.0f : 1.0f / b3Length( GetResponse( lever, direction ) ); }
+
+	void Apply( b3Vec3 lever, b3Vec3 impulse )
+	{
+		if ( m_bFixed )
+			return;
+
+		m_Velocity = b3MulAdd( m_Velocity, m_flInvMass, impulse );
+		m_AngularVelocity = b3Add( m_AngularVelocity, RotateInverseInertia( b3Cross( lever, impulse ) ) );
+	}
+
+	float GetRescueSpeed( float flInverseTimestep ) const
+	{
+		if ( m_bFixed || IsBall( m_pObject ) )
+			return 0.0f;
+
+		const float flRotation = std::min( b3LengthSquared( m_AngularSpeed ) * IMPACT_RESCUE_ROTATION_SCALE, IMPACT_RESCUE_ROTATION_LIMIT );
+		return ( 1.0f - std::cos( std::sqrt( flRotation ) ) ) * m_pObject->GetRestRadius() * flInverseTimestep;
+	}
+};
+
+struct ImpactPoint_t
+{
+	CPhysicsObject *m_pObjects[2];
+	b3Vec3 m_Levers[2];
+	b3Vec3 m_Normal;
+	float m_flElasticity;
+	float m_flFriction;
+	uint64_t m_nSequence;
+};
+
+struct ImpactContact_t
+{
+	const void *m_pKey;
+	int m_nBodies[2];
+	b3Vec3 m_Levers[2];
+	b3Vec3 m_Normal;
+	float m_flGap;
+	float m_flElasticity;
+	float m_flFriction;
+	float m_flPredicted;
+	float m_flRescue;
+	int m_nImpacts;
+	bool m_bComputed;
+};
+
+static float GetImpactElasticity( int nMaterial0, int nMaterial1 )
+{
+	float flDensity, flThickness, flFriction, flElasticity0, flElasticity1;
+	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial0, &flDensity, &flThickness, &flFriction, &flElasticity0 );
+	g_PhysicsSurfaceProps.GetPhysicsProperties( nMaterial1, &flDensity, &flThickness, &flFriction, &flElasticity1 );
+	return std::clamp( flElasticity0 * flElasticity1, 0.0f, 1.0f );
+}
+
+struct ImpactSystem_t
+{
+	std::vector<ImpactBody_t> &m_Bodies;
+	std::vector<ImpactContact_t> &m_Contacts;
+	const std::vector<ImpactPoint_t> &m_Points;
+	uint64_t m_nStepSequence;
+	IPhysicsCollisionSolver *m_pSolver;
+	uint32_t m_nStep;
+	int m_nMaxImpacts;
+	float m_flTimestep;
+	float m_flInverseTimestep;
+
+	int AddBody( CPhysicsObject *pObject )
+	{
+		for ( size_t i = 0; i < m_Bodies.size(); ++i )
+		{
+			if ( m_Bodies[i].m_pObject == pObject )
+				return static_cast<int>( i );
+		}
+		m_Bodies.emplace_back( pObject, m_nStep );
+		return static_cast<int>( m_Bodies.size() - 1 );
+	}
+
+	void AddContact( const void *pKey, CPhysicsObject *pObject0, CPhysicsObject *pObject1, b3Vec3 lever0, b3Vec3 lever1, b3Vec3 normal, float flGap, float flElasticity, float flFriction )
+	{
+		if ( std::any_of( m_Contacts.begin(), m_Contacts.end(), [pKey]( const ImpactContact_t &contact ) { return contact.m_pKey == pKey; } ) )
+			return;
+
+		ImpactContact_t contact;
+		contact.m_pKey = pKey;
+		contact.m_nBodies[0] = AddBody( pObject0 );
+		contact.m_nBodies[1] = AddBody( pObject1 );
+		contact.m_Levers[0] = lever0;
+		contact.m_Levers[1] = lever1;
+		contact.m_Normal = normal;
+		contact.m_flGap = flGap;
+		contact.m_flElasticity = flElasticity;
+		contact.m_flFriction = flFriction;
+		contact.m_flPredicted = 0.0f;
+		contact.m_flRescue = 0.0f;
+		contact.m_nImpacts = 0;
+		contact.m_bComputed = false;
+		m_Contacts.push_back( contact );
+	}
+
+	void Expand( int nBody )
+	{
+		m_Bodies[nBody].m_bExpanded = true;
+		m_Bodies[nBody].m_bTouched = true;
+		CPhysicsObject *pObject = m_Bodies[nBody].m_pObject;
+		for ( const FrictionContact_t *pFriction = pObject->GetFrictionHead(); pFriction; pFriction = pFriction->GetNext( pObject ) )
+		{
+			if ( pFriction->m_bRemoved || pFriction->m_bEnding || pFriction->m_nSequence > m_nStepSequence || std::any_of( m_Points.begin(), m_Points.end(), [pFriction]( const ImpactPoint_t &point ) { return point.m_nSequence == pFriction->m_nSequence; } ) )
+				continue;
+
+			const float flGap = std::max( ( pFriction->m_flSeparation + 2.0f * SHAPE_INFLATION ) * SOURCE_TO_IVP, 0.0f );
+			AddContact( pFriction, pFriction->m_pObjects[0], pFriction->m_pObjects[1], SourceToIVP( pFriction->m_Anchors[0] ), SourceToIVP( pFriction->m_Anchors[1] ), SourceToIVPDirection( ToBox3D( pFriction->m_Normal ) ), flGap, GetImpactElasticity( pFriction->m_Materials[0], pFriction->m_Materials[1] ), pFriction->m_flFriction );
+		}
+
+		for ( const ImpactPoint_t &point : m_Points )
+		{
+			if ( point.m_pObjects[0] == pObject || point.m_pObjects[1] == pObject )
+				AddContact( &point, point.m_pObjects[0], point.m_pObjects[1], point.m_Levers[0], point.m_Levers[1], point.m_Normal, COLLISION_TOLERANCE, point.m_flElasticity, point.m_flFriction );
+		}
+	}
+
+	void CommitBody( ImpactBody_t &body )
+	{
+		if ( !body.m_bFixed )
+		{
+			body.m_Speed = body.m_Velocity;
+			body.m_AngularSpeed = body.m_AngularVelocity;
+		}
+		if ( body.m_nImpacts > m_nMaxImpacts )
+			body.m_bFrozen = !m_pSolver || m_pSolver->ShouldFreezeObject( body.m_pObject );
+	}
+
+	int Commit( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flMassA, float flMassB, float flMinSpeed, bool bHeavyCheck )
+	{
+		ImpactBody_t *bodies[2] = { &a, &b };
+		const b3Vec3 levers[2] = { leverA, leverB };
+		for ( ImpactBody_t *pBody : bodies )
+		{
+			if ( !pBody->m_bFixed )
+				++pBody->m_nImpacts;
+		}
+
+		int nReturned = 3;
+		bool bCommitted = false;
+		const int nHeavy = flMassA <= flMassB ? 1 : 0;
+		ImpactBody_t &heavy = *bodies[nHeavy], &light = *bodies[1 - nHeavy];
+		if ( bHeavyCheck && !heavy.m_bFixed )
+		{
+			const b3Vec3 heavyPoint = heavy.GetPointSpeed( levers[nHeavy] ), lightPoint = light.GetPointVelocity( levers[1 - nHeavy] );
+			const float flSeparation = b3Dot( normal, nHeavy == 0 ? b3Sub( lightPoint, heavyPoint ) : b3Sub( heavyPoint, lightPoint ) );
+			if ( flSeparation > IMPACT_HEAVY_SEPARATION * flMinSpeed )
+			{
+				CommitBody( light );
+				--heavy.m_nImpacts;
+				nReturned &= ~( 1 << nHeavy );
+				bCommitted = true;
+			}
+		}
+		if ( !bCommitted )
+		{
+			CommitBody( a );
+			CommitBody( b );
+		}
+
+		if ( a.m_bFrozen || b.m_bFrozen )
+		{
+			for ( ImpactBody_t *pBody : bodies )
+			{
+				if ( pBody->m_bFixed )
+					continue;
+
+				pBody->m_bFrozen = true;
+				pBody->m_Speed = b3Vec3_zero;
+				pBody->m_AngularSpeed = b3Vec3_zero;
+			}
+			nReturned = 3;
+		}
+		return nReturned;
+	}
+
+	void EnforceSeparation( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flMinSpeed, bool bSeparatingIsRest )
+	{
+		float flSeparation = b3Dot( b3Sub( b.GetPointVelocity( leverB ), a.GetPointVelocity( leverA ) ), normal );
+		if ( bSeparatingIsRest && flSeparation >= 0.0f )
+			flSeparation = 0.0f;
+		if ( flMinSpeed - flSeparation < 0.0f )
+			return;
+
+		float flResponse = 0.0f;
+		if ( !b.m_bFixed )
+			flResponse += b3Dot( b.GetResponse( leverB, normal ), normal );
+		if ( !a.m_bFixed )
+			flResponse += b3Dot( a.GetResponse( leverA, normal ), normal );
+		const float flImpulse = ( flMinSpeed - flSeparation ) / ( flResponse + IMPACT_RESPONSE_EPSILON );
+		if ( flImpulse < 0.0f )
+			return;
+
+		a.Apply( leverA, b3MulSV( -flImpulse, normal ) );
+		b.Apply( leverB, b3MulSV( flImpulse, normal ) );
+	}
+
+	int Solve( ImpactBody_t &a, b3Vec3 leverA, ImpactBody_t &b, b3Vec3 leverB, b3Vec3 normal, float flElasticity, float flFriction, bool bTilt, float flMinSpeed, int nImpacts )
+	{
+		const float flTilt = ( std::sqrt( flElasticity ) + 1.0f ) * flFriction;
+		const float flAngle = std::atan( flTilt );
+		const float flCos = bTilt ? ( 1.0f - flAngle * flAngle * 0.5f ) + flAngle * flAngle * IMPACT_COSINE_QUARTIC * flAngle * flAngle : 1.0f;
+		const float flSin = bTilt ? flCos * flTilt : 0.0f;
+		const auto getRelative = [&]() { return b3Sub( b.GetPointVelocity( leverB ), a.GetPointVelocity( leverA ) ); };
+		const auto getDirection = [&]( b3Vec3 relative ) {
+			const b3Vec3 direction = b3LengthSquared( relative ) < IMPACT_NORMALIZE_EPSILON ? relative : b3Normalize( relative );
+			const float flNormal = b3Dot( direction, normal );
+			if ( flNormal > 0.0f )
+				return b3Vec3_zero;
+			if ( -flCos >= flNormal )
+				return direction;
+
+			b3Vec3 tangent = b3MulSub( direction, flNormal, normal );
+			if ( b3LengthSquared( tangent ) >= IMPACT_NORMALIZE_EPSILON )
+				tangent = b3Normalize( tangent );
+			return b3MulAdd( b3MulSV( -flCos, normal ), flSin, tangent );
+		};
+		const auto apply = [&]( float flImpulse, b3Vec3 direction ) {
+			a.Apply( leverA, b3MulSV( flImpulse, direction ) );
+			b.Apply( leverB, b3MulSV( -flImpulse, direction ) );
+		};
+
+		float flMassA = a.GetEffectiveMass( leverA, b3Neg( normal ) );
+		float flMassB = b.GetEffectiveMass( leverB, normal );
+		if ( a.m_bFixed )
+			flMassA = flMassB * IMPACT_FIXED_MASS_RATIO;
+		if ( b.m_bFixed )
+			flMassB = flMassA * IMPACT_FIXED_MASS_RATIO;
+
+		b3Vec3 relative = getRelative();
+		const float flNormalSpeed = b3Dot( normal, relative );
+		if ( flNormalSpeed > -IMPACT_APPROACH_EPSILON )
+		{
+			EnforceSeparation( a, leverA, b, leverB, normal, flMinSpeed, true );
+			return Commit( a, leverA, b, leverB, normal, flMassA, flMassB, flMinSpeed, nImpacts <= IMPACT_REPEAT_LIMIT );
+		}
+
+		const float flStep = -IMPACT_PUSH_FRACTION / ( flMassA + flMassB ) * flMassA * ( flMassB + flMassB ) * flNormalSpeed;
+		float flApproach = -flNormalSpeed;
+		const float flTarget = std::sqrt( 1.0f - ( 1.0f - flElasticity ) / ( static_cast<float>( nImpacts ) * IMPACT_REPEAT_ELASTICITY_SCALE + 1.0f ) ) * flApproach;
+		const float flRepeat = std::sqrt( static_cast<float>( nImpacts ) ) * IMPACT_REPEAT_SEPARATION;
+		b3Vec3 direction = getDirection( relative );
+		int nIterations = 0;
+		for ( ; flApproach > 0.0f && nIterations < IMPACT_MAX_ITERATIONS; ++nIterations )
+		{
+			apply( flStep, direction );
+			relative = getRelative();
+			flApproach = -b3Dot( normal, relative );
+			direction = getDirection( relative );
+		}
+
+		const float flNeeded = flApproach + flTarget + flRepeat;
+		if ( flNeeded > 0.0f && nIterations != IMPACT_MAX_ITERATIONS )
+		{
+			const ImpactBody_t savedA = a, savedB = b;
+			apply( 1.0f, b3Neg( normal ) );
+			const float flResponse = b3Dot( normal, getRelative() ) + flApproach;
+			a = savedA;
+			b = savedB;
+			apply( std::fabs( flResponse ) <= IMPACT_APPROACH_EPSILON ? 0.0f : flNeeded / flResponse, b3Neg( normal ) );
+		}
+		EnforceSeparation( a, leverA, b, leverB, normal, flMinSpeed, false );
+		return Commit( a, leverA, b, leverB, normal, flMassA, flMassB, flMinSpeed, true );
+	}
+
+	int SolveFirst( int nBody0, int nBody1, const b3Vec3 levers[2], b3Vec3 normal, float flElasticity, float flFriction )
+	{
+		const bool bFlip = m_Bodies[nBody1].m_bFixed;
+		ImpactBody_t &a = m_Bodies[bFlip ? nBody1 : nBody0], &b = m_Bodies[bFlip ? nBody0 : nBody1];
+		const float flMinSpeed = ( 2.0f * ( a.GetRescueSpeed( m_flInverseTimestep ) + b.GetRescueSpeed( m_flInverseTimestep ) ) + IMPACT_RESCUE_GAP ) * IMPACT_RESCUE_SPEED_SCALE;
+		const bool bTilt = !a.m_pObject->IsCarCore() && !b.m_pObject->IsCarCore();
+		return Solve( a, levers[bFlip ? 1 : 0], b, levers[bFlip ? 0 : 1], bFlip ? b3Neg( normal ) : normal, flElasticity, flFriction, bTilt, flMinSpeed, 0 );
+	}
+
+	void Predict( ImpactContact_t &contact )
+	{
+		contact.m_bComputed = true;
+		if ( contact.m_flGap > IMPACT_PROPAGATION_MAX_GAP )
+		{
+			contact.m_flPredicted = FLT_MAX;
+			return;
+		}
+
+		const ImpactBody_t &body0 = m_Bodies[contact.m_nBodies[0]], &body1 = m_Bodies[contact.m_nBodies[1]];
+		const float flGapSpeed = contact.m_flGap < COLLISION_TOLERANCE ? 2.0f * m_flInverseTimestep * ( COLLISION_TOLERANCE - contact.m_flGap ) : 0.0f;
+		contact.m_flRescue = 2.0f * ( body0.GetRescueSpeed( m_flInverseTimestep ) + body1.GetRescueSpeed( m_flInverseTimestep ) ) + flGapSpeed;
+		const float flApproach = b3Dot( contact.m_Normal, b3Sub( body0.GetPointSpeed( contact.m_Levers[0] ), body1.GetPointSpeed( contact.m_Levers[1] ) ) );
+		contact.m_flPredicted = contact.m_flGap - ( contact.m_flRescue * 0.5f + flApproach ) * m_flTimestep;
+	}
+
+	void ResetPredictions( int nBody )
+	{
+		for ( ImpactContact_t &contact : m_Contacts )
+		{
+			if ( contact.m_nBodies[0] == nBody || contact.m_nBodies[1] == nBody )
+				contact.m_bComputed = false;
+		}
+	}
+
+	void Propagate()
+	{
+		for ( int nPass = 0; nPass <= IMPACT_PROPAGATION_PASSES; ++nPass )
+		{
+			int nBest = -1;
+			float flBest = COLLISION_TOLERANCE;
+			for ( int i = static_cast<int>( m_Contacts.size() ) - 1; i >= 0; --i )
+			{
+				ImpactContact_t &contact = m_Contacts[i];
+				const ImpactBody_t &body0 = m_Bodies[contact.m_nBodies[0]], &body1 = m_Bodies[contact.m_nBodies[1]];
+				if ( ( body0.m_bFixed || body0.m_bFrozen ) && ( body1.m_bFixed || body1.m_bFrozen ) )
+					continue;
+
+				if ( !contact.m_bComputed )
+					Predict( contact );
+				if ( contact.m_flPredicted < flBest )
+				{
+					nBest = i;
+					flBest = contact.m_flPredicted;
+				}
+			}
+			if ( nBest < 0 )
+				return;
+
+			ImpactContact_t &contact = m_Contacts[nBest];
+			for ( int nBody : contact.m_nBodies )
+			{
+				ImpactBody_t &body = m_Bodies[nBody];
+				if ( !body.m_bTouched && !body.m_bFixed && !body.m_pObject->IsAsleep() )
+					body.m_bTouched = true;
+			}
+
+			const bool bFlip = m_Bodies[contact.m_nBodies[1]].m_bFixed;
+			const int nBodyA = contact.m_nBodies[bFlip ? 1 : 0], nBodyB = contact.m_nBodies[bFlip ? 0 : 1];
+			ImpactBody_t &a = m_Bodies[nBodyA], &b = m_Bodies[nBodyB];
+			const bool bTilt = !a.m_pObject->IsCarCore() && !b.m_pObject->IsCarCore();
+			const float flMinSpeed = ( contact.m_flRescue + IMPACT_RESCUE_GAP ) * IMPACT_RESCUE_SPEED_SCALE;
+			const int nImpacts = ++contact.m_nImpacts;
+			const int nReturned = Solve( a, contact.m_Levers[bFlip ? 1 : 0], b, contact.m_Levers[bFlip ? 0 : 1], bFlip ? b3Neg( contact.m_Normal ) : contact.m_Normal, contact.m_flElasticity, contact.m_flFriction, bTilt, flMinSpeed, nImpacts );
+
+			const int returned[2] = { nBodyA, nBodyB };
+			for ( int i = 0; i < 2; ++i )
+			{
+				if ( !( nReturned & ( 1 << i ) ) || m_Bodies[returned[i]].m_bFixed )
+					continue;
+
+				if ( !m_Bodies[returned[i]].m_bTouched || m_Bodies[returned[i]].m_bExpanded )
+					ResetPredictions( returned[i] );
+				else
+					Expand( returned[i] );
+			}
+		}
+	}
+};
+
+float CPhysicsEnvironment::GetImpactNormalSpeed( const ContactEvent_t &event ) const
+{
+	const ImpactBody_t body0( event.m_pObjects[0], m_nStepCount ), body1( event.m_pObjects[1], m_nStepCount );
+	const b3Vec3 relative = b3Sub( body1.GetPointVelocity( SourceToIVP( event.m_Anchors[1] ) ), body0.GetPointVelocity( SourceToIVP( event.m_Anchors[0] ) ) );
+	return b3Dot( SourceToIVPDirection( ToBox3D( event.m_Normal ) ), relative );
+}
+
+void CPhysicsEnvironment::CreateFollowingFriction( const ContactEvent_t &event )
+{
+	auto it = m_Contacts.find( event.m_nContactKey );
+	if ( it == m_Contacts.end() || !b3Contact_IsValid( it->second.m_ContactId ) )
+		return;
+
+	Contact_t &contact = it->second;
+	if ( std::any_of( contact.m_Friction.begin(), contact.m_Friction.end(), [&]( const FrictionContact_t *pFriction ) { return pFriction->m_nFeatureId == event.m_nFeatureId && pFriction->m_nTriangle == event.m_nTriangle; } ) )
+		return;
+
+	const b3ContactData data = b3Contact_GetData( contact.m_ContactId );
+	for ( int m = 0; m < data.manifoldCount; ++m )
+	{
+		const b3Manifold &manifold = data.manifolds[m];
+		for ( int p = 0; p < manifold.pointCount; ++p )
+		{
+			const b3ManifoldPoint &point = manifold.points[p];
+			if ( point.featureId != event.m_nFeatureId || point.triangleIndex != event.m_nTriangle )
+				continue;
+
+			const b3Vec3 worldPoint = b3Add( b3ToVec3( b3Body_GetWorldCenter( contact.m_pObjects[0]->GetBody() ) ), point.anchorA );
+			CreateFrictionContact( contact, manifold, point, worldPoint, IsBall( contact.m_pObjects[0] ) || IsBall( contact.m_pObjects[1] ) );
+			return;
+		}
+	}
+}
+
+void CPhysicsEnvironment::DispatchFollowingImpacts( const ContactEvent_t &primary, const ContactEvent_t *pBegin, const ContactEvent_t *pEnd )
+{
+	float flTime = std::max( primary.m_flSeparation + SHAPE_INFLATION, 0.0f ) / primary.m_flApproachSpeed;
+	const float flEnd = std::max( flTime, m_flTimestep );
+	std::vector<std::pair<const ContactEvent_t *, float>> pending;
+	for ( const ContactEvent_t *pEvent = pBegin; pEvent != pEnd; ++pEvent )
+		pending.emplace_back( pEvent, pEvent->m_flSeparation + SHAPE_INFLATION - pEvent->m_flApproachSpeed * flTime );
+
+	std::vector<float> approaches;
+	while ( !pending.empty() )
+	{
+		approaches.clear();
+		size_t nNext = pending.size();
+		float flArrival = flEnd;
+		for ( size_t i = 0; i < pending.size(); ++i )
+		{
+			const float flApproach = -GetImpactNormalSpeed( *pending[i].first );
+			approaches.push_back( flApproach * IVP_TO_SOURCE );
+			if ( flApproach <= IMPACT_APPROACH_EPSILON )
+				continue;
+
+			const float flHit = flTime + std::max( pending[i].second, 0.0f ) / approaches.back();
+			if ( flHit < flArrival || ( flHit == flArrival && ( nNext == pending.size() || approaches.back() > approaches[nNext] ) ) )
+			{
+				flArrival = flHit;
+				nNext = i;
+			}
+		}
+		if ( nNext == pending.size() )
+			return;
+
+		for ( size_t i = 0; i < pending.size(); ++i )
+			pending[i].second -= approaches[i] * ( flArrival - flTime );
+		flTime = flArrival;
+
+		CreateFollowingFriction( *pending[nNext].first );
+		++m_Stats.impactCounter;
+		if ( m_pCollisionEvents )
+			ReportImpact( *pending[nNext].first );
+		pending.erase( pending.begin() + static_cast<ptrdiff_t>( nNext ) );
+	}
 }
 
 void CPhysicsEnvironment::ReportImpact( const ContactEvent_t &event )
@@ -1992,6 +2496,30 @@ void CPhysicsEnvironment::ReportImpact( const ContactEvent_t &event )
 	m_pCollisionEvents->PreCollision( &m_CollisionEvent );
 	pObject0->SetReportPreStepVelocity( false );
 	pObject1->SetReportPreStepVelocity( false );
+
+	const ImpactPoint_t &impact = m_ImpactPoints.emplace_back( ImpactPoint_t{ { pObject0, pObject1 }, { SourceToIVP( event.m_Anchors[0] ), SourceToIVP( event.m_Anchors[1] ) }, SourceToIVPDirection( ToBox3D( event.m_Normal ) ), GetImpactElasticity( event.m_Materials[0], event.m_Materials[1] ), event.m_flFriction, event.m_nSequence } );
+	m_ImpactBodies.clear();
+	m_ImpactContacts.clear();
+	ImpactSystem_t system{ m_ImpactBodies, m_ImpactContacts, m_ImpactPoints, m_nStepContactSequence, m_pCollisionSolver, m_nStepCount, m_PerformanceSettings.maxCollisionsPerObjectPerTimestep, m_flTimestep, m_flInverseTimestep };
+	const int nBody0 = system.AddBody( pObject0 ), nBody1 = system.AddBody( pObject1 );
+	system.SolveFirst( nBody0, nBody1, impact.m_Levers, impact.m_Normal, impact.m_flElasticity, impact.m_flFriction );
+	for ( int nBody : { nBody0, nBody1 } )
+	{
+		if ( !system.m_Bodies[nBody].m_bFixed )
+			system.Expand( nBody );
+	}
+	system.Propagate();
+
+	for ( const ImpactBody_t &body : system.m_Bodies )
+	{
+		if ( body.m_bFixed )
+			continue;
+
+		body.m_pObject->SetImpactState( m_nStepCount, body.m_nImpacts, body.m_bFrozen );
+		if ( !body.m_pObject->IsReportingImpactVelocity() )
+			m_ImpactObjects.push_back( body.m_pObject );
+		body.m_pObject->SetReportedImpactVelocity( body.m_Velocity, body.m_pObject->IVPToCore( body.m_AngularVelocity ) );
+	}
 
 	m_CollisionEvent.collisionSpeed = event.m_flApproachSpeed;
 	m_pCollisionEvents->PostCollision( &m_CollisionEvent );
@@ -2077,21 +2605,61 @@ int CPhysicsEnvironment::GetPointMaterials( const Contact_t &contact, const b3Ma
 	return nSide;
 }
 
-FrictionContact_t *CPhysicsEnvironment::CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall )
+void CPhysicsEnvironment::SetImpactAnchors( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, bool bSupport, ContactEvent_t &event )
+{
+	const int nOwner = GetPointVertexOwner( contact, manifold, point );
+	if ( nOwner < 0 || !contact.m_pConvexes[nOwner] || IsBall( contact.m_pObjects[0] ) || IsBall( contact.m_pObjects[1] ) )
+		return;
+
+	const CPhysicsObject *pOwner = contact.m_pObjects[nOwner];
+	const b3Quat rotation = pOwner->GetPreStepRotation();
+	const b3Vec3 localCenter = b3Body_GetLocalCenter( pOwner->GetBody() );
+	const b3Vec3 anchors[2] = { point.anchorA, point.anchorB };
+	const b3Vec3 anchor = b3InvRotateVector( rotation, anchors[nOwner] );
+	const b3Vec3 direction = b3InvRotateVector( rotation, nOwner == 0 ? manifold.normal : b3Neg( manifold.normal ) );
+	b3Vec3 best = b3Vec3_zero;
+	float flBestExtent = -FLT_MAX, flBestDistance = FLT_MAX;
+	for ( b3Vec3 vertex : contact.m_pConvexes[nOwner]->GetPoints() )
+	{
+		const b3Vec3 offset = b3Sub( vertex, localCenter );
+		const float flExtent = bSupport ? b3Dot( offset, direction ) : 0.0f;
+		const float flDistance = b3DistanceSquared( offset, anchor );
+		if ( flExtent > flBestExtent || ( flExtent == flBestExtent && flDistance < flBestDistance ) )
+		{
+			flBestExtent = flExtent;
+			flBestDistance = flDistance;
+			best = offset;
+		}
+	}
+
+	const b3Vec3 lever = b3RotateVector( rotation, best );
+	const b3Vec3 shift = b3Sub( lever, anchors[nOwner] );
+	const int nEventOwner = event.m_pObjects[0] == pOwner ? 0 : 1;
+	event.m_Anchors[nEventOwner] = lever;
+	event.m_Anchors[1 - nEventOwner] = b3Add( anchors[1 - nOwner], shift );
+}
+
+void CPhysicsEnvironment::FillFrictionPoint( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, FrictionContact_t &friction )
 {
 	const Vector normal = ToSource( manifold.normal );
-	const Vector point0 = ToSource( worldPoint );
+	friction.m_nFeatureId = point.featureId;
+	friction.m_nTriangle = point.triangleIndex;
+	friction.m_nSide = GetPointMaterials( contact, manifold, point, worldPoint, bBall, friction.m_Materials );
+	friction.m_flFriction = MixFriction( GetMaterialFriction( friction.m_Materials[0] ), 0, GetMaterialFriction( friction.m_Materials[1] ), 0 );
+	friction.m_pObjects[0] = contact.m_pObjects[friction.m_nSide];
+	friction.m_pObjects[1] = contact.m_pObjects[1 - friction.m_nSide];
+	friction.m_Point = ToSource( worldPoint );
+	friction.m_Normal = friction.m_nSide == 0 ? normal : -normal;
+	friction.m_flSeparation = point.separation;
+	friction.m_Anchors[friction.m_nSide] = point.anchorA;
+	friction.m_Anchors[1 - friction.m_nSide] = point.anchorB;
+}
+
+FrictionContact_t *CPhysicsEnvironment::CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall )
+{
 	FrictionContact_t &created = *contact.m_Friction.emplace_back( new FrictionContact_t{} );
 	created.m_nSequence = ++m_nContactSequence;
-	created.m_nFeatureId = point.featureId;
-	created.m_nTriangle = point.triangleIndex;
-	created.m_nSide = GetPointMaterials( contact, manifold, point, worldPoint, bBall, created.m_Materials );
-	created.m_flFriction = MixFriction( GetMaterialFriction( created.m_Materials[0] ), 0, GetMaterialFriction( created.m_Materials[1] ), 0 );
-	created.m_pObjects[0] = contact.m_pObjects[created.m_nSide];
-	created.m_pObjects[1] = contact.m_pObjects[1 - created.m_nSide];
-	created.m_Point = point0;
-	created.m_Normal = created.m_nSide == 0 ? normal : -normal;
-	created.m_flSeparation = point.separation;
+	FillFrictionPoint( contact, manifold, point, worldPoint, bBall, created );
 	LinkFriction( &created );
 	AddFrictionPair( GetPairKey( contact.m_pObjects[0], contact.m_pObjects[1] ) );
 
@@ -2187,6 +2755,7 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 		}
 	}
 	std::erase_if( contact.m_Points, [this]( const ContactPoint_t &tracked ) { return tracked.m_nStep != m_nStepCount; } );
+	const std::vector<ContactImpact_t> arrivals = impacts;
 
 	std::vector<FrictionContact_t *> unbound;
 	for ( FrictionContact_t *pFriction : contact.m_Friction )
@@ -2292,6 +2861,8 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 		friction.m_Point = ToSource( entry.m_WorldPoint );
 		friction.m_Normal = friction.m_nSide == 0 ? normal : -normal;
 		friction.m_flSeparation = point.separation;
+		friction.m_Anchors[friction.m_nSide] = point.anchorA;
+		friction.m_Anchors[1 - friction.m_nSide] = point.anchorB;
 		if ( friction.m_bRemoved )
 			continue;
 
@@ -2306,8 +2877,23 @@ void CPhysicsEnvironment::UpdateFrictionContacts( Contact_t &contact )
 	for ( const ContactImpact_t &impact : impacts )
 	{
 		const FrictionContact_t *pFriction = points[impact.m_nPoint].m_pFriction;
-		if ( !pFriction->m_bRemoved )
-			QueueContactEvent( ContactEvent_t::IMPACT, contact, *pFriction, impact.m_flSpeed );
+		if ( pFriction->m_bRemoved )
+			continue;
+
+		QueueContactEvent( ContactEvent_t::IMPACT, contact, *pFriction, impact.m_flSpeed );
+		SetImpactAnchors( contact, *points[impact.m_nPoint].m_pManifold, *points[impact.m_nPoint].m_pPoint, true, m_ContactEvents.back() );
+		for ( const ContactImpact_t &arrival : arrivals )
+		{
+			const ManifoldPoint_t &entry = points[arrival.m_nPoint];
+			if ( arrival.m_nPoint == impact.m_nPoint || entry.m_nLedge != points[impact.m_nPoint].m_nLedge )
+				continue;
+
+			FrictionContact_t following{};
+			FillFrictionPoint( contact, *entry.m_pManifold, *entry.m_pPoint, entry.m_WorldPoint, bBall, following );
+			QueueContactEvent( ContactEvent_t::IMPACT, contact, following, arrival.m_flSpeed );
+			SetImpactAnchors( contact, *entry.m_pManifold, *entry.m_pPoint, false, m_ContactEvents.back() );
+			m_ContactEvents.back().m_bFollowing = true;
+		}
 	}
 
 	if ( contact.m_bCompound )
@@ -2497,8 +3083,20 @@ void CPhysicsEnvironment::DispatchContactEvents()
 {
 	std::vector<ContactEvent_t> events;
 	events.swap( m_ContactEvents );
-	for ( const ContactEvent_t &event : events )
+	m_ImpactPoints.clear();
+	for ( size_t i = 0; i < events.size(); ++i )
 	{
+		const ContactEvent_t &event = events[i];
+		if ( event.m_bFollowing )
+		{
+			size_t nEnd = i;
+			while ( nEnd < events.size() && events[nEnd].m_bFollowing )
+				++nEnd;
+			DispatchFollowingImpacts( events[i - 1], &events[i], events.data() + nEnd );
+			i = nEnd - 1;
+			continue;
+		}
+
 		if ( event.m_nType == ContactEvent_t::IMPACT )
 		{
 			++m_Stats.impactCounter;
@@ -2517,6 +3115,9 @@ void CPhysicsEnvironment::DispatchContactEvents()
 	}
 	events.clear();
 	m_ContactEvents.swap( events );
+	for ( CPhysicsObject *pObject : m_ImpactObjects )
+		pObject->ClearReportedImpactVelocity();
+	m_ImpactObjects.clear();
 }
 
 void CPhysicsEnvironment::ReportTrigger( CPhysicsObject *pTrigger, CPhysicsObject *pObject, bool bEnter )

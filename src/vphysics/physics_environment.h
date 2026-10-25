@@ -26,6 +26,9 @@ class CPhysicsObject;
 class CBuoyancyController;
 class CPhysicsFluidController;
 class CPhysicsPlayerController;
+struct ImpactBody_t;
+struct ImpactContact_t;
+struct ImpactPoint_t;
 
 class CCollisionData final : public IPhysicsCollisionData
 {
@@ -63,6 +66,7 @@ struct FrictionContact_t
 	int m_Materials[2];
 	Vector m_Point;
 	Vector m_Normal;
+	b3Vec3 m_Anchors[2];
 	b3Vec3 m_Span;
 	float m_flFriction;
 	float m_flSeparation;
@@ -326,6 +330,14 @@ private:
 		Vector m_Point;
 		Vector m_Normal;
 		float m_flApproachSpeed;
+		float m_flFriction;
+		float m_flSeparation;
+		b3Vec3 m_Anchors[2];
+		uint64_t m_nSequence;
+		uint64_t m_nContactKey;
+		uint32_t m_nFeatureId;
+		int m_nTriangle;
+		bool m_bFollowing;
 		FrictionContact_t *m_pEnding;
 	};
 
@@ -414,7 +426,11 @@ private:
 	bool ShouldDetachContact( const Contact_t &contact ) const;
 	bool UpdateDetachedContact( Contact_t &contact );
 	float GetMeshFrictionGap( const Contact_t &contact, const FrictionContact_t &friction ) const;
+	void FillFrictionPoint( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, FrictionContact_t &friction );
 	FrictionContact_t *CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall );
+	float GetImpactNormalSpeed( const ContactEvent_t &event ) const;
+	void CreateFollowingFriction( const ContactEvent_t &event );
+	void DispatchFollowingImpacts( const ContactEvent_t &primary, const ContactEvent_t *pBegin, const ContactEvent_t *pEnd );
 	int GetPointMaterials( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, int materials[2] ) const;
 	void SelectLedgeImpacts();
 	void AccumulateFrictionEnergy( Contact_t &contact, float flCapacity );
@@ -434,6 +450,7 @@ private:
 	int GetContactMaterial( const Contact_t &contact, int nSide, int nTriangle, const Vector &point, const Vector &outwardNormal, bool bFaceFeature ) const;
 	static int GetContactLedge( const Contact_t &contact, int nTriangle );
 	static int GetPointVertexOwner( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point );
+	static void SetImpactAnchors( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, bool bSupport, ContactEvent_t &event );
 
 	b3WorldId m_World = b3_nullWorldId;
 	IVPhysicsDebugOverlay *m_pDebugOverlay = nullptr;
@@ -560,6 +577,11 @@ private:
 	std::vector<FrictionDispatch_t> m_FrictionDispatches;
 	std::vector<ContactNormal_t> m_ContactNormals;
 	uint64_t m_nContactSequence = 0;
+	uint64_t m_nStepContactSequence = 0;
+	std::vector<ImpactPoint_t> m_ImpactPoints;
+	std::vector<ImpactBody_t> m_ImpactBodies;
+	std::vector<ImpactContact_t> m_ImpactContacts;
+	std::vector<CPhysicsObject *> m_ImpactObjects;
 	uint32_t m_nLastObjectId = 0;
 	uint32_t m_nStepCount = 0;
 	uint32_t m_nReviveSequence = 0;

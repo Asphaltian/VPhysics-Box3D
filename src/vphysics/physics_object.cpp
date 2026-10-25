@@ -625,9 +625,15 @@ void CPhysicsObject::CapturePreStepVelocity( uint32_t nStepCount )
 {
 	m_PreStepVelocity = IVPToSource( GetCoreVelocity() );
 	m_PreStepAngularVelocity = GetBodyAngularVelocity( GetCoreAngularVelocity() );
+	m_PreStepRotation = b3Body_GetRotation( m_Body );
 	m_nPreStepCount = nStepCount;
 	m_bPreStepVelocityValid = true;
 	m_bPreStepAngularVelocityValid = true;
+}
+
+b3Quat CPhysicsObject::GetPreStepRotation() const
+{
+	return m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepRotation : b3Body_GetRotation( m_Body );
 }
 
 Vector CPhysicsObject::GetPreStepVelocityAtPoint( const Vector &worldPosition ) const
@@ -1318,7 +1324,9 @@ void CPhysicsObject::SetCoreVelocity( b3Vec3 velocity )
 {
 	m_CoreVelocity = velocity;
 	m_bCoreVelocityValid = true;
-	m_bPreStepVelocityValid = false;
+	if ( m_bReportPreStepVelocity )
+		m_bPreStepVelocityValid = false;
+	m_bReportImpactVelocity = false;
 	QueueVelocityFlush();
 }
 
@@ -1341,7 +1349,9 @@ void CPhysicsObject::SetCoreAngularVelocity( b3Vec3 angular )
 {
 	m_CoreAngularVelocity = angular;
 	m_bCoreAngularVelocityValid = true;
-	m_bPreStepAngularVelocityValid = false;
+	if ( m_bReportPreStepVelocity )
+		m_bPreStepAngularVelocityValid = false;
+	m_bReportImpactAngularVelocity = false;
 	QueueVelocityFlush();
 }
 
@@ -1490,6 +1500,9 @@ void CPhysicsObject::AddVelocity( const Vector *velocity, const AngularImpulse *
 
 b3Vec3 CPhysicsObject::GetReportedVelocity() const
 {
+	if ( m_bReportImpactVelocity )
+		return m_ImpactVelocity;
+
 	if ( m_bReportPreStepVelocity && m_bPreStepVelocityValid )
 		return SourceToIVP( m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepVelocity : b3Vec3_zero );
 	return GetCoreVelocity();
@@ -1497,12 +1510,23 @@ b3Vec3 CPhysicsObject::GetReportedVelocity() const
 
 b3Vec3 CPhysicsObject::GetReportedAngularVelocity() const
 {
+	if ( m_bReportImpactAngularVelocity )
+		return m_ImpactAngularVelocity;
+
 	if ( m_bReportPreStepVelocity && m_bPreStepAngularVelocityValid )
 	{
 		const b3Vec3 w = m_nPreStepCount == m_pEnvironment->GetStepCount() ? m_PreStepAngularVelocity : b3Vec3_zero;
 		return IVPToCore( { w.x, -w.z, w.y } );
 	}
 	return GetCoreAngularVelocity();
+}
+
+void CPhysicsObject::SetReportedImpactVelocity( b3Vec3 velocity, b3Vec3 angularVelocity )
+{
+	m_ImpactVelocity = b3Sub( velocity, m_PendingVelocity );
+	m_ImpactAngularVelocity = b3Sub( angularVelocity, m_PendingAngularVelocity );
+	m_bReportImpactVelocity = true;
+	m_bReportImpactAngularVelocity = true;
 }
 
 void CPhysicsObject::GetVelocity( Vector *velocity, AngularImpulse *angularVelocity ) const

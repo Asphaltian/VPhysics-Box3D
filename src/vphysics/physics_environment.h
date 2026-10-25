@@ -260,6 +260,7 @@ public:
 
 	bool IsCollisionAllowed( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
 	bool IsContactEnabled( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1 ) const;
+	bool IsContactActive( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos point, b3Vec3 normal ) const;
 	void QueuePenetrationCheck( CPhysicsObject *pObject );
 	bool IsShapePairHeld( b3ShapeId shape0, b3ShapeId shape1 ) const;
 	void ResolveFilterDecisions( CPhysicsObject *pObject, bool bForce );
@@ -402,14 +403,16 @@ private:
 	void ProcessSensorEvents();
 	void ProcessPenetration();
 	void ResolveStaticPenetration( const Contact_t &contact );
-	void HoldStaticPenetration( const Contact_t &contact );
+	void ResolveObjectPenetration( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
+	void ResolveHeldObjects( CPhysicsObject *pObject0, CPhysicsObject *pObject1 );
+	void HoldPenetration( const Contact_t &contact );
 	void ResolveLedgePenetration( const CPhysConvex &convex, const CPhysicsObject *pStatic, CPhysicsObject *pObject );
 	void DetectPendingPenetrationHolds();
 	void CaptureBulletSweeps();
 	void ResolveBulletPairs();
-	void TryHoldPenetration( b3ShapeId shape, b3ShapeId staticShape );
-	bool FindHeldLedges( b3ShapeId shape, b3ShapeId staticShape, std::vector<const CPhysConvex *> &ledges );
-	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId staticShape ) const;
+	void TryHoldPenetration( b3ShapeId shape, b3ShapeId partnerShape );
+	bool FindHeldLedges( b3ShapeId shape, b3ShapeId partnerShape, std::vector<const CPhysConvex *> &ledges );
+	bool HasShapeFriction( const CPhysicsObject *pObject, b3ShapeId shape, b3ShapeId partnerShape ) const;
 	void UpdatePenetrationHolds();
 	void QueuePenetrationReset( CPhysicsObject *pObject );
 	void ApplyPenetrationResets();
@@ -429,6 +432,7 @@ private:
 	void FillFrictionPoint( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, FrictionContact_t &friction );
 	FrictionContact_t *CreateFrictionContact( Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall );
 	float GetImpactNormalSpeed( const ContactEvent_t &event ) const;
+	static float GetImpactArrival( const ContactEvent_t &event );
 	void CreateFollowingFriction( const ContactEvent_t &event );
 	void DispatchFollowingImpacts( const ContactEvent_t &primary, const ContactEvent_t *pBegin, const ContactEvent_t *pEnd );
 	int GetPointMaterials( const Contact_t &contact, const b3Manifold &manifold, const b3ManifoldPoint &point, b3Vec3 worldPoint, bool bBall, int materials[2] ) const;
@@ -440,7 +444,7 @@ private:
 	void QueueContactEvent( ContactEvent_t::Type_t nType, const Contact_t &contact, const FrictionContact_t &friction, float flApproachSpeed );
 	void DispatchContactEvents();
 	void ReportTouch( CPhysicsObject *pObject0, CPhysicsObject *pObject1, const Vector &point, const Vector &normal, bool bStart );
-	void ReportImpact( const ContactEvent_t &event );
+	void ReportImpact( const ContactEvent_t &event, float flTime );
 	void ReportTrigger( CPhysicsObject *pTrigger, CPhysicsObject *pObject, bool bEnter );
 	void ReportOverlap( TriggerOverlap_t &overlap, bool bEnter );
 	void ReportPendingLeaves( CPhysicsObject *pObject );
@@ -562,7 +566,7 @@ private:
 	{
 		CPhysicsObject *m_pObject;
 		b3ShapeId m_Shape;
-		b3ShapeId m_StaticShape;
+		b3ShapeId m_PartnerShape;
 	};
 
 	std::vector<CPhysicsObject *> m_PendingHoldChecks;
@@ -578,6 +582,7 @@ private:
 	std::vector<ContactNormal_t> m_ContactNormals;
 	uint64_t m_nContactSequence = 0;
 	uint64_t m_nStepContactSequence = 0;
+	uint32_t m_nImpactRun = 0;
 	std::vector<ImpactPoint_t> m_ImpactPoints;
 	std::vector<ImpactBody_t> m_ImpactBodies;
 	std::vector<ImpactContact_t> m_ImpactContacts;

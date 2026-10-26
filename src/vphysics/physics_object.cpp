@@ -519,7 +519,7 @@ void CPhysicsObject::CreateShapes( bool bSensor )
 
 		for ( const std::unique_ptr<CPhysConvex> &pConvex : m_pCollide->GetConvexes() )
 		{
-			if ( bMeshed && pConvex->IsFlat() )
+			if ( bMeshed && pConvex->IsFlat() && !pConvex->IsDetached() )
 				continue;
 
 			const b3HullData *pHull = pConvex->GetHull();
@@ -814,8 +814,12 @@ void CPhysicsObject::ResetClock( double flLastStepTime )
 void CPhysicsObject::ComputeRestRadius( b3Vec3 massCenter )
 {
 	const CPhysCollideCompactSurface *pSurface = m_pCollide ? m_pCollide->GetCompactSurface() : nullptr;
-	if ( pSurface )
-		m_flRestRadius = pSurface->GetUpperLimitRadius() + std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
+	if ( !pSurface )
+		return;
+
+	const float flShift = std::sqrt( b3LengthSquared( b3Sub( pSurface->GetIVPMassCenter(), massCenter ) ) );
+	m_flRestRadius = pSurface->GetUpperLimitRadius() + flShift;
+	m_flRadiusDeviation = pSurface->GetMaxDeviation() + flShift;
 }
 
 double CPhysicsObject::GetRotationDistance( DoubleQuat_t a, DoubleQuat_t b ) const

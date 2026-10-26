@@ -45,6 +45,8 @@ inline constexpr uint8_t COLLIDE_MAP_OCTANTS = 1;
 inline constexpr uint8_t COLLIDE_MAP_CONTIGUOUS = 2;
 inline constexpr uint8_t COLLIDE_MAP_RUNS = 4;
 
+class CPhysCollideCompactSurface;
+
 struct CollideMapEntry_t
 {
 	uint16_t m_nCount;
@@ -104,6 +106,12 @@ public:
 	int FindTriangleMaterial( b3Vec3 localNormal, b3Vec3 localPoint ) const;
 	int GetUniformMaterial() const;
 
+	void SetLedgeNode( const CPhysCollideCompactSurface *pSurface, int nNode, bool bDetached );
+
+	bool IsDetached() const { return m_bDetached; }
+
+	bool IsReachable( b3Vec3 center, float flRadius ) const;
+
 private:
 	enum : uint8_t
 	{
@@ -124,7 +132,10 @@ private:
 	mutable b3HullData *m_pHull = nullptr;
 	mutable std::atomic<uint8_t> m_nHullState = HULL_UNCLASSIFIED;
 	mutable bool m_bFlat = false;
+	bool m_bDetached = false;
 	unsigned int m_nGameData = 0;
+	const CPhysCollideCompactSurface *m_pLedgeSurface = nullptr;
+	int m_nLedgeNode = -1;
 };
 
 struct CollideMesh_t
@@ -201,6 +212,8 @@ public:
 		float m_flRadius;
 		int m_nRightChild;
 		int m_nConvex;
+		int m_nParent;
+		uint8_t m_BoxSizes[3];
 	};
 
 	struct LedgeSphere_t
@@ -213,6 +226,7 @@ public:
 	{
 		size_t m_nOffset;
 		LedgeSphere_t m_Sphere;
+		int m_nNode;
 	};
 
 	struct LedgeTree_t
@@ -275,6 +289,8 @@ public:
 
 	std::span<const LedgeTreeNode_t> GetLedgeTree() const { return m_Nodes; }
 
+	bool IsLedgeReachable( int nNode, b3Vec3 center, float flRadius ) const;
+
 	template<typename Function>
 	void VisitLeafLedges( Function &&function, int nNode = 0 ) const
 	{
@@ -296,6 +312,7 @@ public:
 	Vector GetRotationInertia() const;
 
 	float GetUpperLimitRadius() const;
+	float GetMaxDeviation() const;
 
 	float GetBoundingRadius() const;
 

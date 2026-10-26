@@ -16,6 +16,7 @@
 #include <new>
 
 static constexpr float LEAF_SPHERE_MARGIN = 1.001f;
+static constexpr float QUANTIZED_RADIUS_SCALE = 0.004f;
 static constexpr float MIN_MESH_TRIANGLE_AREA_SCALE = 0.01f;
 
 struct LedgeScan_t
@@ -228,14 +229,14 @@ struct LedgeTreeReader_t
 	CPhysCollideCompactSurface::LedgeTree_t &m_Tree;
 	std::array<LedgeScan_t, MAX_COLLIDE_MAP_LEDGES> m_Scans;
 
-	bool Read( size_t nNode, int nDepth )
+	bool Read( size_t nNode, int nDepth, int nParent )
 	{
 		if ( nDepth > MAX_LEDGETREE_DEPTH || !ContainsRange( m_nSize, nNode, COMPACT_LEDGETREE_NODE_SIZE ) )
 			return false;
 
 		const unsigned char *pNode = m_pSurface + nNode;
 		const size_t nIndex = m_Tree.m_Nodes.size();
-		m_Tree.m_Nodes.push_back( { LoadPoint( pNode + 8 ), Load<float>( pNode + 0x14 ), -1, -1 } );
+		m_Tree.m_Nodes.push_back( { LoadPoint( pNode + 8 ), Load<float>( pNode + 0x14 ), -1, -1, nParent, { pNode[0x18], pNode[0x19], pNode[0x1a] } } );
 
 		const int32_t nRightOffset = Load<int32_t>( pNode );
 		const int32_t nLedgeOffset = Load<int32_t>( pNode + 4 );
@@ -255,19 +256,19 @@ struct LedgeTreeReader_t
 
 			m_Tree.m_Nodes[nIndex].m_nConvex = static_cast<int>( nLedgeIndex );
 			const CPhysCollideCompactSurface::LedgeTreeNode_t &node = m_Tree.m_Nodes[nIndex];
-			m_Tree.m_Ledges.push_back( { static_cast<size_t>( nLedge ), { node.m_Center, node.m_flRadius * LEAF_SPHERE_MARGIN } } );
+			m_Tree.m_Ledges.push_back( { static_cast<size_t>( nLedge ), { node.m_Center, node.m_flRadius * LEAF_SPHERE_MARGIN }, static_cast<int>( nIndex ) } );
 			return true;
 		}
 
 		if ( nLedgeOffset != 0 )
 			m_Tree.m_bHasOuterHull = true;
 
-		if ( !Read( nNode + COMPACT_LEDGETREE_NODE_SIZE, nDepth + 1 ) )
+		if ( !Read( nNode + COMPACT_LEDGETREE_NODE_SIZE, nDepth + 1, static_cast<int>( nIndex ) ) )
 			return false;
 
 		m_Tree.m_Nodes[nIndex].m_nRightChild = static_cast<int>( m_Tree.m_Nodes.size() );
 		const ptrdiff_t nRight = static_cast<ptrdiff_t>( nNode ) + nRightOffset;
-		return nRight >= 0 && Read( static_cast<size_t>( nRight ), nDepth + 1 );
+		return nRight >= 0 && Read( static_cast<size_t>( nRight ), nDepth + 1, static_cast<int>( nIndex ) );
 	}
 };
 
@@ -285,7 +286,7 @@ bool CPhysCollideCompactSurface::ReadLedgeTree( const unsigned char *pSurface, s
 	tree.m_Ledges.reserve( nNodeCount / 2 + 1 );
 
 	LedgeTreeReader_t reader = { pSurface, nSize, tree, {} };
-	if ( !reader.Read( static_cast<size_t>( nRoot ), 0 ) )
+	if ( !reader.Read( static_cast<size_t>( nRoot ), 0, -1 ) )
 		return false;
 
 	if ( tree.m_Ledges.size() > MAX_COLLIDE_MAP_LEDGES )
@@ -501,6 +502,35 @@ CPhysConvex::CPhysConvex( std::vector<b3Vec3> points, std::vector<Triangle_t> tr
 {
 }
 
+void CPhysConvex::SetLedgeNode( const CPhysCollideCompactSurface *pSurface, int nNode, bool bDetached )
+{
+	m_pLedgeSurface = pSurface;
+	m_nLedgeNode = nNode;
+	m_bDetached = bDetached;
+}
+
+bool CPhysConvex::IsReachable( b3Vec3 center, float flRadius ) const
+{
+	return m_pLedgeSurface->IsLedgeReachable( m_nLedgeNode, center, flRadius );
+}
+
+bool CPhysCollideCompactSurface::IsLedgeReachable( int nNode, b3Vec3 center, float flRadius ) const
+{
+	for ( ; nNode >= 0; nNode = m_Nodes[nNode].m_nParent )
+	{
+		const LedgeTreeNode_t &node = m_Nodes[nNode];
+		const b3Vec3 delta = b3Sub( node.m_Center, center );
+		const float flReach = node.m_flRadius + flRadius;
+		if ( delta.y * delta.y + delta.x * delta.x + delta.z * delta.z > flReach * flReach )
+			return false;
+
+		const float flScale = node.m_flRadius * QUANTIZED_RADIUS_SCALE;
+		if ( static_cast<float>( node.m_BoxSizes[0] ) * flScale + flRadius <= std::fabs( delta.x ) || static_cast<float>( node.m_BoxSizes[1] ) * flScale + flRadius <= std::fabs( delta.y ) || static_cast<float>( node.m_BoxSizes[2] ) * flScale + flRadius <= std::fabs( delta.z ) )
+			return false;
+	}
+	return true;
+}
+
 static std::mutex s_LazyBuildMutex;
 
 static bool IsCoplanar( const std::vector<b3Vec3> &points, const std::vector<CPhysConvex::Triangle_t> &triangles )
@@ -702,7 +732,7 @@ static std::vector<std::unique_ptr<CollideMesh_t>> CreateStaticMeshes( const std
 	for ( size_t nConvex = 0; nConvex < convexes.size(); ++nConvex )
 	{
 		const CPhysConvex &convex = *convexes[nConvex];
-		if ( !convex.IsFlat() )
+		if ( !convex.IsFlat() || convex.IsDetached() )
 			continue;
 
 		const std::vector<CPhysConvex::Triangle_t> &triangles = convex.GetTriangles();
@@ -892,7 +922,15 @@ void CPhysCollideCompactSurface::BuildConvexes() const
 
 	m_Convexes.reserve( m_Ledges.size() );
 	for ( const Ledge_t &ledge : m_Ledges )
-		m_Convexes.push_back( ReadLedgeConvex( m_pSurface + ledge.m_nOffset ) );
+	{
+		std::unique_ptr<CPhysConvex> pConvex = ReadLedgeConvex( m_pSurface + ledge.m_nOffset );
+		const LedgeTreeNode_t &node = m_Nodes[ledge.m_nNode];
+		const b3Vec3 center = IVPToSource( node.m_Center );
+		const float flLimit = node.m_flRadius * IVP_TO_SOURCE * LEAF_SPHERE_MARGIN;
+		const bool bDetached = std::any_of( pConvex->GetPoints().begin(), pConvex->GetPoints().end(), [&]( b3Vec3 point ) { return b3Length( b3Sub( point, center ) ) > flLimit; } );
+		pConvex->SetLedgeNode( this, ledge.m_nNode, bDetached );
+		m_Convexes.push_back( std::move( pConvex ) );
+	}
 	m_bConvexesBuilt.store( true, std::memory_order_release );
 }
 
@@ -932,6 +970,11 @@ Vector CPhysCollideCompactSurface::GetRotationInertia() const
 float CPhysCollideCompactSurface::GetUpperLimitRadius() const
 {
 	return Load<float>( m_pSurface + SURFACE_UPPER_LIMIT_RADIUS_OFFSET );
+}
+
+float CPhysCollideCompactSurface::GetMaxDeviation() const
+{
+	return static_cast<float>( m_pSurface[SURFACE_BYTE_SIZE_OFFSET] ) * QUANTIZED_RADIUS_SCALE * GetUpperLimitRadius();
 }
 
 float CPhysCollideCompactSurface::GetBoundingRadius() const

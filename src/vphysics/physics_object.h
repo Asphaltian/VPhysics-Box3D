@@ -195,6 +195,8 @@ public:
 
 	float GetRestRadius() const { return m_flRestRadius; }
 
+	float GetRadiusDeviation() const { return m_flRadiusDeviation; }
+
 	void SetTouchedDynamic() { m_bHasTouchedDynamic = true; }
 
 	void ClearAsleepSinceCreation() { m_bAsleepSinceCreation = false; }
@@ -542,6 +544,7 @@ private:
 	double m_flFineRestTime = 0.0;
 	double m_flCoarseRestTime = 0.0;
 	float m_flRestRadius = 0.0f;
+	float m_flRadiusDeviation = 0.0f;
 	float m_flLastStepMotion = 0.0f;
 	SleepState_t m_nSleepState = ASLEEP;
 

@@ -69,6 +69,11 @@ static constexpr float IMPACT_PROPAGATION_MAX_GAP = 22.0f * COLLISION_TOLERANCE;
 static constexpr int IMPACT_PROPAGATION_PASSES = 5000;
 static constexpr float PENETRATION_SEPARATION = -2.0f * SHAPE_INFLATION;
 static constexpr float PENETRATION_MIN_DISTANCE = 0.01f;
+static constexpr float COLLISION_RANGE_SPEED_SCALE = 0.5f;
+static constexpr float COLLISION_RANGE_RADIUS_SCALE = 0.9f;
+static constexpr float COLLISION_RANGE_MIN = 0.8f;
+static constexpr float COLLISION_RANGE_MAX = 10.0f;
+static constexpr float COLLISION_RANGE_SPEED_FLOOR = 0.06f;
 static constexpr float MESH_COPLANAR_COSINE = 0.996f;
 static constexpr float FRICTION_RELEASE_SEPARATION = 4.5f * COLLISION_TOLERANCE * IVP_TO_SOURCE - 2.0f * SHAPE_INFLATION;
 static constexpr float FRICTION_SPAN_TOLERANCE = 1e-6f * IVP_TO_SOURCE * IVP_TO_SOURCE;
@@ -194,10 +199,43 @@ static float GetMaterialFriction( int nMaterial )
 	return flFriction;
 }
 
+static float GetRangeSpeed( const CPhysicsObject *pObject )
+{
+	const b3BodyId body = pObject->GetBody();
+	return b3Length( b3Body_GetLinearVelocity( body ) ) * SOURCE_TO_IVP + b3Length( b3Body_GetAngularVelocity( body ) ) * pObject->GetRadiusDeviation();
+}
+
+static float GetCollisionRange( const CPhysicsObject *pObject0, const CPhysicsObject *pObject1, float flTimestep )
+{
+	const float flSpeed = GetRangeSpeed( pObject0 ) + GetRangeSpeed( pObject1 );
+	const float flRange = std::clamp( std::min( std::min( pObject0->GetRestRadius(), pObject1->GetRestRadius() ) * COLLISION_RANGE_RADIUS_SCALE, flSpeed * COLLISION_RANGE_SPEED_SCALE ), COLLISION_RANGE_MIN, COLLISION_RANGE_MAX );
+	return std::max( flRange - flSpeed * flTimestep, flSpeed * COLLISION_RANGE_SPEED_FLOOR );
+}
+
+static bool IsLedgeReachable( b3ShapeId ledgeShape, b3ShapeId shape, float flTimestep )
+{
+	if ( b3Shape_GetType( ledgeShape ) != b3_hullShape )
+		return true;
+
+	const CPhysConvex &ledge = *static_cast<const CPhysConvex *>( b3Shape_GetUserData( ledgeShape ) );
+	if ( !ledge.IsDetached() )
+		return true;
+
+	const CPhysicsObject *pLedgeObject = GetShapeObject( ledgeShape );
+	const CPhysicsObject *pObject = GetShapeObject( shape );
+	const b3Vec3 center = b3Body_GetLocalPoint( pLedgeObject->GetBody(), b3Body_GetWorldCenter( pObject->GetBody() ) );
+	return ledge.IsReachable( SourceToIVP( center ), pLedgeObject->GetIVPSphereRadius() + pObject->GetRestRadius() + GetCollisionRange( pLedgeObject, pObject, flTimestep ) );
+}
+
+static bool IsShapePairReachable( b3ShapeId shapeA, b3ShapeId shapeB, float flTimestep )
+{
+	return IsLedgeReachable( shapeA, shapeB, flTimestep ) && IsLedgeReachable( shapeB, shapeA, flTimestep );
+}
+
 static bool FilterShapes( b3ShapeId shapeA, b3ShapeId shapeB, void *pContext )
 {
 	CPhysicsEnvironment *pEnvironment = static_cast<CPhysicsEnvironment *>( pContext );
-	return !pEnvironment->IsShapePairHeld( shapeA, shapeB ) && pEnvironment->IsCollisionAllowed( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
+	return !pEnvironment->IsShapePairHeld( shapeA, shapeB ) && IsShapePairReachable( shapeA, shapeB, pEnvironment->GetSimulationTimestep() ) && pEnvironment->IsCollisionAllowed( GetShapeObject( shapeA ), GetShapeObject( shapeB ) );
 }
 
 static bool PreSolveShapes( b3ShapeId shapeA, b3ShapeId shapeB, b3Pos point, b3Vec3 normal, void *pContext )
@@ -1396,7 +1434,7 @@ bool CPhysicsEnvironment::IsContactActive( b3ShapeId shapeA, b3ShapeId shapeB, b
 {
 	const CPhysicsObject *pObjectA = GetShapeObject( shapeA );
 	const CPhysicsObject *pObjectB = GetShapeObject( shapeB );
-	if ( !IsContactEnabled( pObjectA, pObjectB ) )
+	if ( !IsContactEnabled( pObjectA, pObjectB ) || !IsShapePairReachable( shapeA, shapeB, m_flTimestep ) )
 		return false;
 
 	const b3BodyId bodies[2] = { pObjectA->GetBody(), pObjectB->GetBody() };
@@ -3483,7 +3521,7 @@ void CPhysicsEnvironment::TryHoldPenetration( b3ShapeId shape, b3ShapeId partner
 	if ( !IsContactEnabled( pObject, pPartner ) || HasShapeFriction( pObject, shape, partnerShape ) )
 		return;
 
-	if ( !ShouldCollide( pObject, pPartner ) )
+	if ( !ShouldCollide( pObject, pPartner ) || !IsShapePairReachable( shape, partnerShape, m_flTimestep ) )
 		return;
 
 	if ( !FindHeldLedges( shape, partnerShape, m_HeldLedges ) )
@@ -3690,7 +3728,7 @@ void CPhysicsEnvironment::UpdatePenetrationHolds()
 		const PenetrationHold_t hold = m_PenetrationHolds[i];
 		bool bHeld = b3Shape_IsValid( hold.m_Shape ) && b3Shape_IsValid( hold.m_PartnerShape ) && hold.m_pObject->IsMoveable() && hold.m_pObject->IsCollisionEnabled();
 		CPhysicsObject *pPartner = bHeld ? GetShapeObject( hold.m_PartnerShape ) : nullptr;
-		bHeld = bHeld && pPartner->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pPartner ) && FindHeldLedges( hold.m_Shape, hold.m_PartnerShape, m_HeldLedges );
+		bHeld = bHeld && pPartner->IsCollisionEnabled() && IsContactEnabled( hold.m_pObject, pPartner ) && IsShapePairReachable( hold.m_Shape, hold.m_PartnerShape, m_flTimestep ) && FindHeldLedges( hold.m_Shape, hold.m_PartnerShape, m_HeldLedges );
 		if ( bHeld )
 		{
 			if ( pPartner->IsStatic() )

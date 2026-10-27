@@ -1,0 +1,41 @@
+name: Feature request
+description: Something VPhysics Box3D doesn't do yet that you'd like it to.
+labels: [ enhancement ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to suggest something new. If something crashes or stops working, use the **Bug report** form instead. If objects behave differently compared to the game's original physics, use the **Physics difference** form.
+
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Garry's Mod
+        - Source SDK 2013 Multiplayer game or mod
+        - Any game
+    validations:
+      required: true
+
+  - type: textarea
+    id: request
+    attributes:
+      label: What you'd like
+      description: Describe what you want VPhysics Box3D to do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why
+      description: What you'd use it for, and what you do about it right now.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Links, videos, screenshots, or how another game or physics engine handles it.

@@ -77,6 +77,9 @@ The library ends up in `build/<preset>/src/Release/`. Swap `-release` for `-debu
 
 ## Installing
 
+> [!CAUTION]
+> **For Garry's Mod users: only the default branch is supported.** Do not create issues for `x86-64`, not `dev`, not any other beta branch. I will not be responsible for your incompetence to read!
+
 Replace the game's own `vphysics` library with the one you built:
 
 | Game | Windows | Linux |
